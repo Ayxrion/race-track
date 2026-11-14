@@ -60,16 +60,22 @@ static const int8_t ROW_ID[PANEL_ROWS + 1] = { UI_NONE, UI_P_WX_PREV, UI_P_TIME_
                                                UI_P_SER_PREV, UI_P_LAPS_PREV, UI_P_CAM_PREV, UI_P_SPEC_PREV };
 
 // ─── Drivers page and its name keyboard ──────────────────────────────────────
-// panelPage 0 = settings, 1 = drivers, 2 = editing a driver's name, 3 = career records.
+// panelPage 0 = settings, 1 = drivers, 2 = editing a driver's name, 3 = career records,
+// 4 = picking a driver's colours.
 static int  panelPage = 0;
 static int  editSlot = 0;
 static char editBuf[4] = "";
-enum : int { UI_D_TOGGLE = 100, UI_D_COPY, UI_D_BACK, UI_D_SEASON, UI_D_NAME0 = 110,
+static uint8_t editLiv = 0;
+enum : int { UI_D_TOGGLE = 100, UI_D_COPY, UI_D_BACK, UI_D_SEASON, UI_D_NAME0 = 110, UI_D_LIV0 = 130,
+             UI_C_PRI0 = 160, UI_C_SEC0 = 180,
              UI_K_KEY0 = 200, UI_K_DEL = 250, UI_K_CANCEL, UI_K_OK };
 static const char KEYS[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 #define NUM_KEYS 36
 static const Rect D_TOGGLE = { PANEL_X + PANEL_W - 190, PANEL_Y + 10, 166, 34 };
 static Rect dSlotName(int k)  { int col = k / 10, row = k % 10; return { (int16_t)(PANEL_X + 16 + col * 240 + 26), (int16_t)(PANEL_Y + 78 + row * 31), 62, 27 }; }
+static Rect dSlotLiv(int k)   { Rect n = dSlotName(k); return { (int16_t)(n.x + n.w + 8), n.y, 40, n.h }; }
+// Colour page: "Team" and the 15 colours, 8 to a row, for the primary and then the secondary.
+static Rect cSwatch(int sec, int j) { return { (int16_t)(PANEL_X + 26 + (j % 8) * 56), (int16_t)(PANEL_Y + (sec ? 186 : 82) + (j / 8) * 40), 52, 34 }; }
 static Rect kKey(int i)       { int col = i % 9, row = i / 9; return { (int16_t)(PANEL_X + 27 + col * 50), (int16_t)(PANEL_Y + 112 + row * 48), 46, 42 }; }
 static const Rect K_DEL = { PANEL_X + 24, PANEL_Y + 320, 130, 40 };
 static const Rect PANEL       = { PANEL_X, PANEL_Y, PANEL_W, PANEL_H };
@@ -89,6 +95,7 @@ static int hitPanel(int x, int y) {
     if (D_TOGGLE.hit(x, y)) return UI_D_TOGGLE;
     for (int k = 0; k < MAX_CARS; ++k) {
       if (dSlotName(k).hit(x, y)) return UI_D_NAME0 + k;
+      if (dSlotLiv(k).hit(x, y)) return UI_D_LIV0 + k;
     }
     if (P_NEXT_RACE.hit(x, y)) return UI_D_COPY;
     if (P_DRIVERS.hit(x, y)) return UI_D_SEASON;
@@ -96,6 +103,15 @@ static int hitPanel(int x, int y) {
     return UI_NONE;
   }
   if (panelPage == 3) return P_CLOSE.hit(x, y) ? UI_D_BACK : UI_NONE;
+  if (panelPage == 4) {
+    for (int j = 0; j <= NUM_LIVERY; ++j) {
+      if (cSwatch(0, j).hit(x, y)) return UI_C_PRI0 + j;
+      if (cSwatch(1, j).hit(x, y)) return UI_C_SEC0 + j;
+    }
+    if (P_NEXT_RACE.hit(x, y)) return UI_K_CANCEL;
+    if (P_CLOSE.hit(x, y)) return UI_K_OK;
+    return UI_NONE;
+  }
   if (panelPage == 2) {
     for (int i = 0; i < NUM_KEYS; ++i) if (kKey(i).hit(x, y)) return UI_K_KEY0 + i;
     if (K_DEL.hit(x, y)) return UI_K_DEL;
@@ -200,6 +216,14 @@ static void driversAction(int id) {
     editSlot = id - UI_D_NAME0;
     memcpy(editBuf, customCode[editSlot], 4); editBuf[3] = 0;
     panelPage = 2;
+  } else if (id >= UI_D_LIV0 && id < UI_D_LIV0 + MAX_CARS) {
+    editSlot = id - UI_D_LIV0;
+    editLiv = customLivery[editSlot];
+    panelPage = 4;
+  } else if (id >= UI_C_PRI0 && id <= UI_C_PRI0 + NUM_LIVERY) {
+    editLiv = (uint8_t)((editLiv & 0xF0) | (id - UI_C_PRI0));
+  } else if (id >= UI_C_SEC0 && id <= UI_C_SEC0 + NUM_LIVERY) {
+    editLiv = (uint8_t)((editLiv & 0x0F) | ((id - UI_C_SEC0) << 4));
   } else if (id >= UI_K_KEY0 && id < UI_K_KEY0 + NUM_KEYS) {
     size_t n = strlen(editBuf);
     if (n < 3) { editBuf[n] = KEYS[id - UI_K_KEY0]; editBuf[n + 1] = 0; }
@@ -207,6 +231,10 @@ static void driversAction(int id) {
     size_t n = strlen(editBuf);
     if (n > 0) editBuf[n - 1] = 0;
   } else if (id == UI_K_CANCEL) {
+    panelPage = 1;
+  } else if (id == UI_K_OK && panelPage == 4) {
+    customLivery[editSlot] = editLiv;
+    toast(customDrivers ? "New colours from the next race" : "Saved - turn Custom on to use them", 2200);
     panelPage = 1;
   } else if (id == UI_K_OK) {
     if (editBuf[0]) { memcpy(customCode[editSlot], editBuf, 4); customCode[editSlot][3] = 0; }
@@ -741,6 +769,115 @@ static char     evShow[56] = "";
 static uint32_t evShowUntil = 0;
 static int      ordR[MAX_CARS];
 
+// ─── Lower third: TV captions ────────────────────────────────────────────────
+// A caption in the bottom right, as on TV: for a few seconds after the camera cuts to a battle
+// ("BATTLE FOR P3" and the gap) or to one driver (their place, lap and gap), and after a
+// front-runner's pit stop. Worked out once a frame (here), drawn in every strip it touches.
+#define L3_W 252
+#define L3_H 46
+#define L3_X (SCREEN_W - L3_W - 12)
+#define L3_Y (SCREEN_H - L3_H - 44)
+#define L3_SHOT_T0 1200u            // ms after a cut before it appears...
+#define L3_SHOT_T1 8000u            // ...and when it goes
+#define L3_PIT_T   5.0f             // s a pit stop caption stays up
+enum L3Kind : uint8_t { L3_NONE, L3_BATTLE, L3_DRIVER, L3_PIT };
+static struct { L3Kind kind; char head[32], a[8], b[8], mid[28]; uint32_t ca, cb; } l3 = {};
+static int      l3Key = -1;
+static uint32_t l3Since = 0, l3Built = 0, l3LastOn = 0;
+
+static float gapSecs(const Car& front, const Car& back) {
+  return fmx(0.0f, front.dist - back.dist) / fmx((front.v + back.v) * 0.5f, 60.0f);
+}
+
+static void prepareLowerThird(int camC) {
+  const uint32_t now = millis();
+  L3Kind kind = L3_NONE; int ka = -1, kb = -1;
+  if (phase == RP_RACE && hudOn && !panelOpen) {
+    const bool pitOn = pitCapCar >= 0 && pitCapCar < numCars && simTime - pitCapT < L3_PIT_T
+                       && (cars[pitCapCar].pos <= 8 || pitCapCar == camC);
+    auto racingCar = [](int i) { return i >= 0 && i < numCars && !cars[i].finished && !cars[i].out && cars[i].pit < 2; };
+    if (pitOn) { kind = L3_PIT; ka = pitCapCar; }
+    else if (racingCar(camC)) {
+      // the camera's car: in a fight (the battle shot's pair, or the car right ahead or behind within
+      // a second), or on its own
+      int a = -1, b = -1;
+      if (autoCam && followCar < 0 && tv.mode == TV_BATTLE && tv.car2 >= 0 && tv.car2 < numCars) { a = tv.car; b = tv.car2; }
+      else {
+        const Car& C = cars[camC];
+        const int ahead = C.pos >= 2 ? order[C.pos - 2] : -1, behind = C.pos < numCars ? order[C.pos] : -1;
+        const float ga = racingCar(ahead) ? gapSecs(cars[ahead], C) : 99.0f, gb = racingCar(behind) ? gapSecs(C, cars[behind]) : 99.0f;
+        if (ga < 1.0f && ga <= gb) { a = ahead; b = camC; } else if (gb < 1.0f) { a = camC; b = behind; }
+      }
+      if (racingCar(a) && racingCar(b)) {
+        ka = cars[a].pos < cars[b].pos ? a : b;          // the one ahead now
+        kb = ka == a ? b : a;
+        if (cars[kb].pos == cars[ka].pos + 1 && gapSecs(cars[ka], cars[kb]) < 1.5f) kind = L3_BATTLE;
+      }
+      if (kind == L3_NONE) { kind = L3_DRIVER; ka = camC; }
+    }
+  }
+  // A new camera shot (or a new pit stop) starts the clock. Within one shot the caption follows what
+  // happens (a lead change, a fight starting) without starting over.
+  const int key = kind == L3_NONE ? -1
+                : kind == L3_PIT ? (int)(0x40000000u | ((uint32_t)(pitCapT * 10) & 0xFFFFFu))
+                : (autoCam && followCar < 0) ? (int)(tv.since & 0x0FFFFFFFu) : (int)(0x20000000u | (uint32_t)followCar);
+  if (key != l3Key) { l3Key = key; l3Since = now; l3Built = 0; }
+  if (kind == L3_BATTLE || kind == L3_DRIVER) {
+    const uint32_t age = now - l3Since;
+    if (age < L3_SHOT_T0 || age > L3_SHOT_T1) kind = L3_NONE;
+  }
+  if (kind == L3_NONE) { l3.kind = L3_NONE; return; }
+  l3LastOn = now;
+  if (l3.kind == kind && now - l3Built < 250) return;       // the numbers tick over four times a second
+  l3Built = now; l3.kind = kind;
+  const Car& A = cars[ka];
+  snprintf(l3.a, sizeof(l3.a), "%s", A.code); l3.ca = A.c1;
+  l3.b[0] = 0; l3.cb = 0;
+  if (kind == L3_PIT) {
+    snprintf(l3.head, sizeof(l3.head), "PIT STOP  -  P%d", A.pos);
+    snprintf(l3.mid, sizeof(l3.mid), pitCapRep ? "%.1f s  tyres + repairs" : "%.1f s  new tyres", pitCapSecs);
+  } else if (kind == L3_BATTLE) {
+    const Car& B = cars[kb];
+    snprintf(l3.head, sizeof(l3.head), A.pos == 1 ? "BATTLE FOR THE LEAD" : "BATTLE FOR P%d", A.pos);
+    snprintf(l3.b, sizeof(l3.b), "%s", B.code); l3.cb = B.c1;
+    snprintf(l3.mid, sizeof(l3.mid), "%.1f s", gapSecs(A, B));
+  } else {
+    const int lapNow = raceLaps > 0 ? clampi(A.lap + 1, 1, raceLaps) : clampi(A.lap + 1, 1, 9999);
+    if (raceLaps > 0) snprintf(l3.head, sizeof(l3.head), "P%d  -  LAP %d / %d", A.pos, lapNow, raceLaps);
+    else              snprintf(l3.head, sizeof(l3.head), "P%d  -  LAP %d", A.pos, lapNow);
+    if (A.pit >= 2) snprintf(l3.mid, sizeof(l3.mid), "in the pits");
+    else if (A.pos == 1) {
+      if (numCars > 1) snprintf(l3.mid, sizeof(l3.mid), "leads by %.1f s", gapSecs(A, cars[order[1]]));
+      else snprintf(l3.mid, sizeof(l3.mid), "leading");
+    } else {
+      const Car& F = cars[order[A.pos - 2]];
+      const float g = gapSecs(F, A);
+      if (g < 60.0f) snprintf(l3.mid, sizeof(l3.mid), "%.1f s behind %s", g, F.code);
+      else snprintf(l3.mid, sizeof(l3.mid), "behind %s", F.code);
+    }
+  }
+  static int logged = -1;                                  // once per caption, in the serial log
+  if (logged != l3Key) { logged = l3Key; Serial.printf("TV: %s | %s %s %s\n", l3.head, l3.a, l3.mid, l3.b); }
+}
+
+static void drawLowerThird() {
+  if (l3.kind == L3_NONE || !stripHit(L3_Y, L3_Y + L3_H)) return;
+  blendRoundRect(L3_X, L3_Y, L3_W, L3_H, 8, 0x06090Cu, 25);
+  const uint32_t accent = l3.kind == L3_PIT ? 0xF0A020u : (l3.kind == L3_BATTLE ? 0xE02A20u : 0xF0F4F4u);
+  if (stripHit(L3_Y + 8, L3_Y + L3_H - 8)) canvas.fillRect(L3_X + 5, L3_Y + 8, 3, L3_H - 16, accent);
+  drawText(l3.head, L3_X + 16, L3_Y + 12, l3.kind == L3_BATTLE ? 0xF0C840u : 0xAEBAC2u, &fonts::DejaVu9, textdatum_t::middle_left);
+  const int ry = L3_Y + 31;
+  if (stripHit(ry - 7, ry + 7)) canvas.fillRect(L3_X + 16, ry - 7, 4, 14, l3.ca);
+  drawText(l3.a, L3_X + 26, ry, 0xFFFFFFu, &fonts::DejaVu12, textdatum_t::middle_left);
+  if (l3.kind == L3_BATTLE) {
+    drawText(l3.mid, L3_X + L3_W / 2, ry, 0xD8E0E6u, &fonts::DejaVu12, textdatum_t::middle_center);
+    if (stripHit(ry - 7, ry + 7)) canvas.fillRect(L3_X + L3_W - 62, ry - 7, 4, 14, l3.cb);
+    drawText(l3.b, L3_X + L3_W - 52, ry, 0xFFFFFFu, &fonts::DejaVu12, textdatum_t::middle_left);
+  } else {
+    drawText(l3.mid, L3_X + L3_W - 14, ry, 0xD8E0E6u, &fonts::DejaVu12, textdatum_t::middle_right);
+  }
+}
+
 static void prepareResults();
 static void prepareUI() {
   prepareResults();
@@ -748,6 +885,7 @@ static void prepareUI() {
   if (hudOn && (!lbBuiltMs || millis() - lbBuiltMs >= 250)) rebuildLeaderboard();
   int camC = cameraCar();
   if (camC != lbCamC) { lbCamC = camC; lbDirty = true; }
+  prepareLowerThird(camC);
   memcpy(evShow, evMsg, sizeof(evShow)); evShow[sizeof(evShow) - 1] = 0;
   evShowUntil = evUntil;
   memcpy(ordR, order, sizeof(ordR));
@@ -1039,10 +1177,76 @@ static void drawPanelButton(const Rect& r, const char* label, uint32_t bg, uint3
   drawText(label, r.x + r.w / 2, r.y + r.h / 2, 0xFFFFFFu, &fonts::DejaVu12, textdatum_t::middle_center);
 }
 
+// A slot's colours: primary on the left, secondary on the right ("team" where not picked).
+static void drawLiverySwatch(const Rect& r, uint8_t liv, bool bright) {
+  const int p = liv & 15, q = liv >> 4;
+  if (!p && !q) {
+    blendRoundRect(r.x, r.y, r.w, r.h, 7, 0x3A4450u, 24);
+    drawText("team", r.x + r.w / 2, r.y + r.h / 2, bright ? 0xB0BCC4u : 0x6A7680u, &fonts::DejaVu9, textdatum_t::middle_center);
+    return;
+  }
+  if (!stripHit(r.y, r.y + r.h)) return;
+  const int hw = r.w / 2;
+  canvas.fillRoundRect(r.x, r.y, r.w, r.h, 6, p ? LIVERY_COLS[p - 1] : 0x3A4450u);
+  canvas.fillRect(r.x + hw, r.y, r.w - hw - 6, r.h, q ? LIVERY_COLS[q - 1] : 0x3A4450u);
+  canvas.fillRoundRect(r.x + hw, r.y, r.w - hw, r.h, 6, q ? LIVERY_COLS[q - 1] : 0x3A4450u);
+  canvas.drawRoundRect(r.x, r.y, r.w, r.h, 6, bright ? 0xC8D0D6u : 0x5A6670u);
+}
+
+// A driver's colours: "Team" (the team's own) or one of the 15, for the primary and the secondary,
+// with a car drawn in them.
+static void drawLiveryPage() {
+  char b[40];
+  snprintf(b, sizeof(b), "Driver %d colours  -  %s", editSlot + 1, customCode[editSlot]);
+  drawText(b, PANEL_X + 24, PANEL_Y + 26, 0xF4F8F8u, &fonts::DejaVu18, textdatum_t::middle_left);
+  for (int sec = 0; sec < 2; ++sec) {
+    const int sel = sec ? editLiv >> 4 : editLiv & 15;
+    snprintf(b, sizeof(b), "%s:  %s", sec ? "Secondary" : "Primary", sel ? LIVERY_NAMES[sel - 1] : "team colour");
+    drawText(b, PANEL_X + 26, PANEL_Y + (sec ? 172 : 68), 0xC0CAD0u, &fonts::DejaVu12, textdatum_t::middle_left);
+    for (int j = 0; j <= NUM_LIVERY; ++j) {
+      const Rect r = cSwatch(sec, j);
+      if (!stripHit(r.y - 3, r.y + r.h + 3)) continue;
+      if (j == 0) {
+        blendRoundRect(r.x, r.y, r.w, r.h, 7, 0x3A4450u, 26);
+        drawText("Team", r.x + r.w / 2, r.y + r.h / 2, 0xE0E6EAu, &fonts::DejaVu9, textdatum_t::middle_center);
+      } else {
+        canvas.fillRoundRect(r.x, r.y, r.w, r.h, 7, LIVERY_COLS[j - 1]);
+      }
+      if (j == sel) {                                  // the one picked: a bright ring
+        canvas.drawRoundRect(r.x - 3, r.y - 3, r.w + 6, r.h + 6, 9, 0xFFFFFFu);
+        canvas.drawRoundRect(r.x - 2, r.y - 2, r.w + 4, r.h + 4, 8, 0xFFFFFFu);
+      } else {
+        canvas.drawRoundRect(r.x, r.y, r.w, r.h, 7, 0x5A6670u);
+      }
+    }
+  }
+  // the car, seen from above (team colours shown in grey where not picked)
+  const int p = editLiv & 15, q = editLiv >> 4;
+  const uint32_t c1 = p ? LIVERY_COLS[p - 1] : 0x8A949Cu, c2 = q ? LIVERY_COLS[q - 1] : 0x5A646Cu;
+  const int cx = PANEL_X + PANEL_W / 2, cy = PANEL_Y + 324;
+  if (stripHit(cy - 34, cy + 34)) {
+    blendRoundRect(cx - 120, cy - 40, 240, 80, 14, 0x000000u, 18);
+    const uint32_t tyre = 0x141414u;
+    canvas.fillRoundRect(cx - 62, cy - 30, 26, 14, 3, tyre); canvas.fillRoundRect(cx - 62, cy + 16, 26, 14, 3, tyre);   // rear wheels
+    canvas.fillRoundRect(cx + 34, cy - 28, 22, 12, 3, tyre); canvas.fillRoundRect(cx + 34, cy + 16, 22, 12, 3, tyre);   // front wheels
+    canvas.fillRoundRect(cx - 86, cy - 26, 14, 52, 3, c2);                       // rear wing
+    canvas.fillRoundRect(cx - 50, cy - 16, 56, 32, 8, c1);                       // sidepods
+    canvas.fillRoundRect(cx - 74, cy - 9, 90, 18, 6, c1);                        // engine cover and tub
+    canvas.fillRoundRect(cx + 4, cy - 6, 62, 12, 5, c1);                         // nose
+    canvas.fillRect(cx - 44, cy - 3, 100, 6, c2);                                // stripe
+    canvas.fillRoundRect(cx + 62, cy - 24, 12, 48, 3, c2);                       // front wing
+    canvas.fillCircle(cx - 6, cy, 6, c2);                                        // helmet
+  }
+  drawText(customDrivers ? "Used from the next race." : "Used when Custom drivers is on.",
+           PANEL_X + PANEL_W / 2, PANEL_Y + 384, 0x8A98A0u, &fonts::DejaVu9, textdatum_t::middle_center);
+  drawPanelButton(P_NEXT_RACE, "Cancel", 0x3A4450u);
+  drawPanelButton(P_CLOSE, "OK", 0xB0302Au, 28);
+}
+
 static void drawDriversPage() {
   drawText("Drivers", PANEL_X + 24, PANEL_Y + 26, 0xF4F8F8u, &fonts::DejaVu18, textdatum_t::middle_left);
   drawPanelButton(D_TOGGLE, customDrivers ? "Custom: On" : "Custom: Off", customDrivers ? 0xB0302Au : 0x3A4450u, 28);
-  drawText(customDrivers ? "On: these drivers race (from the next race). Tap to edit."
+  drawText(customDrivers ? "On: these drivers race (from the next race). Tap a name or its colours."
                          : "Off: the standard field.",
            PANEL_X + 24, PANEL_Y + 60, 0x9AA6B0u, &fonts::DejaVu9, textdatum_t::middle_left);
   char b[8];
@@ -1055,6 +1259,7 @@ static void drawDriversPage() {
     drawText(b, n.x - 6, n.y + n.h / 2, 0x8A98A0u, &fonts::DejaVu9, textdatum_t::middle_right);
     blendRoundRect(n.x, n.y, n.w, n.h, 7, 0x3A4450u, 24);
     drawText(customCode[k], n.x + n.w / 2, n.y + n.h / 2, txt, &fonts::DejaVu12, textdatum_t::middle_center);
+    drawLiverySwatch(dSlotLiv(k), customLivery[k], customDrivers && inRace);
   }
   drawPanelButton(P_NEXT_RACE, "Copy this race", 0x3A4450u);
   drawPanelButton(P_DRIVERS, "New season", 0x3A4450u);
@@ -1125,6 +1330,7 @@ static void drawPanel() {
   if (panelPage == 1) { drawDriversPage(); return; }
   if (panelPage == 2) { drawKeyboardPage(); return; }
   if (panelPage == 3) { drawRecordsPage(); return; }
+  if (panelPage == 4) { drawLiveryPage(); return; }
   drawText("Race settings", PANEL_X + 24, PANEL_Y + 26, 0xF4F8F8u, &fonts::DejaVu18, textdatum_t::middle_left);
   char buf[48];
   snprintf(buf, sizeof(buf), "v%s  WiFi %s", FIRMWARE_VERSION, WiFi.status() == WL_CONNECTED ? "on" : "off");
@@ -1177,6 +1383,7 @@ static void uiDynamicRows(void (*mark)(int, int)) {
   if (phase == RP_GRID) mark(14, 54);
   if (resDirty) mark(RES_Y, RES_Y + RES_H);
   if (millis() <= evShowUntil + 100) mark(SCREEN_H - 36, SCREEN_H - 6);
+  if (millis() <= l3LastOn + 150) mark(L3_Y - 2, L3_Y + L3_H + 2);
   if (millis() <= toastUntil + 100) mark(SCREEN_H - 78, SCREEN_H - 40);
   if (uiVisible() || millis() - lastTouchMs < UI_HIDE_MS + 200) mark(BTN[0].y - 2, BTN[0].y + BTN[0].h + 2);
   if (panelOpen) mark(PANEL_Y, PANEL_Y + PANEL_H);
@@ -1191,7 +1398,7 @@ static void drawUI() {
   UIP(1, drawLeaderboard());
   UIP(2, drawStartLights());
   UIP(3, drawResults());
-  UIP(4, drawEventTicker());
+  UIP(4, drawEventTicker(); drawLowerThird());
   UIP(5, drawTopButtons());
   UIP(6, drawPanel());
   UIP(7, drawToast());

@@ -41,6 +41,7 @@ It uses the same board setup and rendering approach as the koi pond (Desktop Aqu
 - **Safety car**: after a retirement (unless there are fewer than 3 laps to go) the safety car comes out ahead of the leader with its lights flashing. Nobody may pass, and the field closes up behind it. Once the wreck is off the road and a lap has gone by, it's *in this lap*: it pulls off before the line, and racing resumes when the leader crosses it.
 - **Tyres and pit stops**: tyres wear as a car laps and lose grip, slowly at first and then faster. In a race of 8 laps or more every driver plans one stop around half distance, and comes in early for a cheap stop under the safety car, or to have heavy damage repaired. A stop is a drive down the pit lane at the speed limit, new tyres at the car's own garage (a new nose too, if it needs one), and back out: about 9 seconds in all. Tracks without a pit lane, and short races, have no stops.
 - **Race weekend loop**: a quick qualifying sets the grid (the quickest drivers usually start at the front, but a mistake costs places), the cars form up behind the start lights, race for the set number of laps, and take the chequered flag.
+  Pole is worth having: grid slots are a little more than a car length apart, the best drivers react quickest at the lights, and the tow, push to pass and the catch-up for cars further back all build up over the first lap and a half. The pole sitter leads after lap 1 a little under half the time.
   The result is shown, then the championship standings, and then the next circuit is built.
   Races can also be endless.
 - **Championship**: a season is 10 races, scored 25-18-15-12-10-8-6-4-2-1 by place in class, so in Endurance the first GT scores as much as the first prototype. The prototypes go to whoever has had the fewest so far, and each driver keeps their team colours for the season.
@@ -49,6 +50,7 @@ It uses the same board setup and rendering approach as the koi pond (Desktop Aqu
 - **Driver records**: career starts, wins, podiums, poles, fastest laps, titles and the longest winning run, kept across seasons (Settings → *Records*).
   The results call out first wins and podiums, winning runs, wins from far back and big climbs, and the grid ticker announces pole.
 - **Timing**: positions, gaps to the leader (or laps down), cars in the pits, retirements, last laps, the fastest lap, and a ticker for lead changes, passes for the podium, fastest laps, spins, damage, pit stops and the safety car.
+- **TV captions**: a few seconds after the TV camera cuts to a fight, a caption in the bottom right shows *Battle for P3* (or *for the lead*) with both drivers and the live gap; on one driver it shows their place, the lap and the gap to the car ahead (or their lead). After a front-runner's pit stop it shows how long they stood still, and whether they had repairs.
 - **Weather** from OpenWeatherMap: rain and storms make the track darker and wetter and slow the cars, which throw up spray. Storms add lightning, snow whitens the grass, and fog washes the view out.
 - **Day and night** from NTP time. At night the circuit is floodlit, cars run headlights and tail lights, and camera flashes go off in the grandstands.
 - **OTA updates** from this repo's GitHub releases.
@@ -85,6 +87,7 @@ Settings are saved to flash (NVS). Car count, track, car type and drivers take e
 Turn *Custom* on and car 1 gets slot 1's name, car 2 slot 2's, and so on; turn it off for the standard field.
 Points and records belong to a name, so a renamed driver starts from scratch. *New season* (tap twice) wipes the standings; the records stay.
 Tap a name to type a new one (up to 3 letters or digits), and *Copy this race* fills the slots from the field that's racing now.
+Tap the box next to a name to pick that driver's colours: a primary (the body) and a secondary (wings, stripe and helmet), from 15 colours or *Team* for the team's own.
 Slots past the number of cars sit out.
 
 ## Building (Arduino IDE)
@@ -107,6 +110,15 @@ arduino-cli compile --fqbn "esp32:esp32:esp32s3:PSRAM=opi,PartitionScheme=min_sp
 ```
 
 Serial at 115200 prints the track build, FPS, heap, and a per-phase ms/frame breakdown every 5 s.
+
+Test commands over the same serial port (one per line):
+
+| Command | What it does |
+|---|---|
+| `finale [laps]` | The next race is the last of the season, with two drivers 7 points apart at the top. Nothing is saved: the real standings and records are loaded back after it. |
+| `next [laps]` | Skip to the next race (the laps, if given, for that race only). |
+| `shot` | Send the screen at half size as hex RGB565 rows between `SHOT w h` and `SHOT END` (about 35 s; the race pauses meanwhile). |
+| `panel <page> [slot] [colours]` | Open a settings page: 0 settings, 1 drivers, 2 a name, 3 records, 4 a slot's colours; -1 closes it. |
 
 ## OTA releases
 

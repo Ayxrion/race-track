@@ -148,7 +148,11 @@ static const uint8_t BAYER4[16] = { 0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 
 static inline float bayer(int x, int y) { return (BAYER4[(y & 3) * 4 + (x & 3)] + 0.5f) / 16.0f; }
 
 // Grid slots, shared with the race start (race.h).
-static inline float gridSlotS(int k) { return -10.0f - k * 13.0f; }
+// Slots are a bit more than a car length apart (as on a real grid), so the pole sitter starts clear of P2.
+#ifndef GRID_GAP
+#define GRID_GAP 18.0f
+#endif
+static inline float gridSlotS(int k) { return -10.0f - k * GRID_GAP; }
 static inline float gridSlotD(int k) { return ((k & 1) ? 1.0f : -1.0f) * trk.W * 0.24f; }
 #define CAR_MARK_LEN 14.0f
 

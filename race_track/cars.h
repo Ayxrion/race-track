@@ -115,6 +115,7 @@ struct Car {
   int8_t pit;               // 0 racing, 1 heading for the pits, 2 in the lane, 3 stopped, 4 leaving
   uint8_t pitDone; int16_t pitLap; bool repaired;   // stops made, the planned lap, damage fixed
   float pitT, pitBox;       // time left at the stop; where its garage is (signed s)
+  float pitStopT;           // how long its last stop took, stationary (s)
   float dPark, outT;        // where it's being pushed to, and how long ago it retired
   float dbgVT; int8_t dbgAhead;   // last target speed / car followed (debugging)
   float progT, progDist;          // progress watchdog
@@ -128,7 +129,7 @@ static uint8_t raceSeries = SER_FORMULA;
 static float raceTime = 0;
 
 // ─── Simulation events for the race director (race.h) ─────────────────────────
-enum EvType : uint8_t { EV_SPIN, EV_WALL, EV_CONTACT, EV_GRAVEL, EV_DAMAGE, EV_OUT, EV_PIT };
+enum EvType : uint8_t { EV_SPIN, EV_WALL, EV_CONTACT, EV_GRAVEL, EV_DAMAGE, EV_OUT, EV_PIT, EV_PITDONE };
 struct SimEvent { uint8_t type; int8_t a, b; };
 static SimEvent evQ[8];
 static int evN = 0;
@@ -144,6 +145,16 @@ static const char* const DRIVER_CODES[] = {
 // instead of a random one. Saved in NVS by settings.h.
 static bool    customDrivers = false;
 static char    customCode[MAX_CARS][4];
+// Their colours (Settings → Drivers → a slot's colour box): low nibble the primary, high nibble the
+// secondary, each 1..NUM_LIVERY into LIVERY_COLS, or 0 for the team's own colour.
+static uint8_t customLivery[MAX_CARS];
+static const uint32_t LIVERY_COLS[] = {
+  0xD8202Au, 0xF08020u, 0xF0D020u, 0x8CD83Au, 0x1E8A3Au, 0x10A0A0u, 0x40B0F0u, 0x2050C0u,
+  0x0A2A5Au, 0x7A2A9Au, 0xE85A9Au, 0x7A4A2Au, 0xF0F0F0u, 0xA0A8B0u, 0x181818u };
+static const char* const LIVERY_NAMES[] = {
+  "Red", "Orange", "Yellow", "Lime", "Green", "Teal", "Sky blue", "Blue",
+  "Navy", "Purple", "Pink", "Brown", "White", "Silver", "Black" };
+#define NUM_LIVERY 15
 
 // The championship field (champ.h sets these before each race). Car i is always the same driver: the
 // user's slot i, or the standard name for that slot. Each driver keeps a pace, a skill and their colours
@@ -519,12 +530,13 @@ static void pitDrive(Car& c, int i, float dt) {
       c.pit = 3; c.v = 0;
       c.pitT = frandr(2.2f, 3.0f);                             // new tyres
       if (c.dmg >= DMG_SHOW) { c.pitT += frandr(3.0f, 5.0f); c.repaired = true; }   // and a new nose
+      c.pitStopT = c.pitT;
     }
   }
   if (c.pit == 3) {                                            // stopped
     c.v = 0; vt = 0;
     c.pitT -= dt;
-    if (c.pitT <= 0) { c.pit = 4; c.wear = 0; if (c.repaired) c.dmg = fmn(c.dmg, 0.05f); }
+    if (c.pitT <= 0) { c.pit = 4; c.wear = 0; if (c.repaired) c.dmg = fmn(c.dmg, 0.05f); pushEv(EV_PITDONE, i); }
   }
   if (c.pit == 4 && sS >= trk.pitS1) {                         // the end of the lane: racing again
     c.pit = 0; c.ghost = false; ++c.pitDone;
@@ -549,7 +561,6 @@ static void pitDrive(Car& c, int i, float dt) {
   placeOnTrack(c);
   const float mx = c.x - c.px, my = c.y - c.py;
   if (mx * mx + my * my > 1e-4f) c.heading = atan2f(my, mx);
-  (void)i;
 }
 
 static void setupCars(int n, uint8_t series, uint32_t seed) {
@@ -589,6 +600,11 @@ static void setupCars(int n, uint8_t series, uint32_t seed) {
     memcpy(c.code, DRIVER_CODES[codes[i % NUM_CODES]], 3); c.code[3] = 0;
     c.num = (uint8_t)irandr(1, 99);
     if (rosterOn || (customDrivers && customCode[i][0])) { memcpy(c.code, rosterCode(i), 3); c.code[3] = 0; }   // the season's (or the user's own) field
+    if (customDrivers && customLivery[i]) {                  // the user's own colours for this driver
+      const int p = customLivery[i] & 15, q = customLivery[i] >> 4;
+      if (p >= 1 && p <= NUM_LIVERY) c.c1 = LIVERY_COLS[p - 1];
+      if (q >= 1 && q <= NUM_LIVERY) c.c2 = c.c3 = LIVERY_COLS[q - 1];
+    }
     // Driving style: their own quirks.
     c.stApex = clampf(frandr(-0.4f, 0.4f), -1, 1);
     c.stKerb = clampf(frandr(-0.7f, 0.4f), -1, 1);
@@ -609,6 +625,10 @@ static void setupCars(int n, uint8_t series, uint32_t seed) {
       // Qualifying: one flying lap each. The quickest usually take pole; a mistake costs a few places.
       quali[i] = CLS[c.cls].top + c.perf + frandr(-0.003f, 0.003f) - (frand() < (1.0f - c.skill) * 1.5f ? frandr(0.002f, 0.008f) : 0.0f);   // (prototypes ahead of GTs)
     }
+#if REACT_SKILL
+    c.react = 0.15f + frandr(0.0f, 0.06f) + (0.99f - c.skill) * frand();   // the best get away cleanly...
+    if (frand() < 0.04f) c.react += frandr(0.2f, 0.5f);                     // ...and now and then someone bogs down
+#endif
   }
   int gridOrd[MAX_CARS];
   for (int i = 0; i < numCars; ++i) gridOrd[i] = i;
@@ -653,6 +673,20 @@ static void setupCars(int n, uint8_t series, uint32_t seed) {
 #define PACK_T0        2.0f     // s: none within this of them, building smoothly to full at PACK_T1
 #define PACK_T1        8.0f
 #define POS_K          0.10f    // ...plus up to this much (×) by place in the class, the most for last
+// The start: the catch-up by place and the tow build up over the opening laps, so a good grid slot
+// is worth something and the pole sitter isn't a sitting duck on the run to the first corner.
+#ifndef START_LAPS
+#define START_LAPS     1.5f     // laps (of the leader) over which both build up to full
+#endif
+#ifndef START_TOW
+#define START_TOW      0.4f     // share of the tow at the start
+#endif
+#ifndef START_PUSH_T
+#define START_PUSH_T   6.0f     // s: push to pass builds up over this long after the lights (from a standstill
+#endif                          // every car behind is "attacking", and it would out-launch the pole sitter)
+#ifndef REACT_SKILL
+#define REACT_SKILL    1        // 1: reactions at the start go with skill (0: all random)
+#endif
 #define PRESS_T        0.8f     // s: a car this close behind puts you under pressure...
 #define PRESSURE_MIST  2.0f     // ...and doubles your chance of a mistake
 #define COVER_T        0.35f    // s: only a car this close behind, and at least as quick, makes a driver cover the inside
@@ -778,6 +812,8 @@ static void updateCars(float dt, bool racing, bool coolDown) {
   int clsLead[CC_COUNT], clsN[CC_COUNT], clsPos[MAX_CARS];
   for (int k = 0; k < CC_COUNT; ++k) { clsLead[k] = -1; clsN[k] = 0; }
   for (int k = 0; k < numCars; ++k) { const int j = order[k], cl = cars[j].cls; if (clsLead[cl] < 0) clsLead[cl] = j; clsPos[j] = ++clsN[cl]; }
+  const float startFade = smooth01(clampf(cars[order[0]].dist / (trk.L * START_LAPS), 0, 1));   // 0 at the start .. 1 after START_LAPS
+  const float pushFade = smooth01(clampf(raceTime / START_PUSH_T, 0, 1));
   if (scState != SC_NONE && racing) scCaps();
   updateSafetyCar(dt);
   for (int i = 0; i < numCars; ++i) {
@@ -873,7 +909,7 @@ static void updateCars(float dt, bool racing, bool coolDown) {
         const float avgV = fmx(L.dist / raceTime, 50.0f);           // the class leader's average speed so far
         const float x = clampf(((L.dist - c.dist) / avgV - PACK_T0) / fmx(PACK_T1 - PACK_T0, 0.1f), 0, 1);
         const float sm = x * x * (3.0f - 2.0f * x);                  // eases in and out: no step to surge across
-        pack = PACK_K * sm + POS_K * (clsPos[i] - 1) / fmx(clsN[c.cls] - 1, 1);   // the further back, the more they find
+        pack = PACK_K * sm + POS_K * startFade * (clsPos[i] - 1) / fmx(clsN[c.cls] - 1, 1);   // the further back, the more they find
       }
       const float fm = 1.0f + c.form - ease;
       float vT = V_TOP * cs.top * c.perf * T.straight * fm * (1.0f + pack) * (1.0f - DMG_TOP * c.dmg);   // catching up: more speed down the straights
@@ -1021,11 +1057,11 @@ static void updateCars(float dt, bool racing, bool coolDown) {
         }
         if (towG < towRange) {
           float tg = towG / fmx(c.v, 60.0f);          // time gap, s
-          c.tow = clampf((TOW_T1 - tg) / (TOW_T1 - TOW_T0), 0, 1);
+          c.tow = clampf((TOW_T1 - tg) / (TOW_T1 - TOW_T0), 0, 1) * (START_TOW + (1.0f - START_TOW) * startFade);
         }
         if (c.passT > 0) c.tow = fmx(c.tow, towPrev - dt / TOW_HOLD);   // pulling out to pass carries the speed for a while
         if (c.tow > 0) vT = fmn(vT * (1.0f + TOW_GAIN * c.tow), sqrtf(limMin));   // never past what the corners ahead allow
-        if (c.passT > 0 && c.passCar >= 0) vT = fmn(vT * (1.0f + PASS_PUSH), sqrtf(limMin));   // push to pass
+        if (c.passT > 0 && c.passCar >= 0) vT = fmn(vT * (1.0f + PASS_PUSH * pushFade), sqrtf(limMin));   // push to pass
       }
       if (c.pressT > 0) c.pressT -= dt;
       const float vFree = vT;                      // before traffic
@@ -1230,7 +1266,7 @@ static void updateCars(float dt, bool racing, bool coolDown) {
 
       // ── Longitudinal ──
       float accel = A_ACC * cs.acc * c.perf * (1.15f - 0.5f * c.v / (V_TOP * cs.top)) * wx * (c.surface == 1 ? 0.4f : (c.surface ? 0.6f : 1.0f));
-      accel *= (1.0f + TOW_ACC * (towBoxed[i] ? 0.0f : c.tow) * clampf(c.v / (V_TOP * cs.top), 0, 1)) * (c.passT > 0 && c.passCar >= 0 ? 1.0f + PASS_PUSH_ACC : 1.0f);   // drag matters more the faster you go
+      accel *= (1.0f + TOW_ACC * (towBoxed[i] ? 0.0f : c.tow) * clampf(c.v / (V_TOP * cs.top), 0, 1)) * (c.passT > 0 && c.passCar >= 0 ? 1.0f + PASS_PUSH_ACC * pushFade : 1.0f);   // drag matters more the faster you go
       // Faster than the straight-line target only because the tow has gone
       // (pulling out, or drawing alongside): lift and let drag slow the car,
       // keeping the momentum, instead of braking. Corners and traffic still brake.

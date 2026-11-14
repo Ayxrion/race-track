@@ -58,7 +58,12 @@ static RecRow* recFind(const char* code, bool add) {
   return r;
 }
 
+// Test mode (serial "finale"): the standings are made up and nothing is saved; the real ones are
+// loaded back once the test race has been scored.
+static bool champTest = false, champTestRan = false;
+
 static void champSave() {
+  if (champTest) return;
   prefs.begin(SETTINGS_NS, false);
   prefs.putBytes("champ", &champ, sizeof(champ));
   prefs.putBytes("recs", &recs, sizeof(recs));
@@ -115,7 +120,9 @@ static const char* ordSuffix(int n) {
 
 // Before a race is set up: start a new season if the last one is over, fix the field, pick who gets the
 // prototypes in Endurance, and write the grid ticker.
+static void champLoad();
 static void champPrepareRace(int nCars, uint8_t series, int laps) {
+  if (champTestRan) { champTest = champTestRan = false; champLoad(); Serial.println("Test: real standings restored"); }
   if (champ.season == 0 || champ.raceNo >= SEASON_RACES) champNewSeason();
   const int n = clampi(nCars, 2, MAX_CARS);
   champLive = laps > 0;
@@ -247,6 +254,30 @@ static void champRecordRace() {
   Serial.printf("Championship: race %u of %d scored, leader %s %u pts\n", champ.raceNo, SEASON_RACES, standN ? stand[0].code : "-", standN ? stand[0].pts : 0);
 }
 
+// Serial "finale": the next race is the last of the season, two drivers 7 points apart at the top.
+// Points go by the drivers' pace this season, so the table looks like a real one.
+static void champTestFinale(int nCars) {
+  if (champ.season == 0 || champ.raceNo >= SEASON_RACES) champNewSeason();
+  champTest = true; champTestRan = false;
+  const int n = clampi(nCars, 2, MAX_CARS);
+  int idx[MAX_CARS]; float perf[MAX_CARS];
+  for (int i = 0; i < n; ++i) { float sk; seasonAbility(rosterCode(i), champ.seed, perf[i], sk); idx[i] = i; }
+  std::sort(idx, idx + n, [&](int a, int b) { return perf[a] > perf[b]; });
+  static const uint16_t PTS[MAX_CARS] = { 168, 161, 140, 118, 101, 88, 70, 52, 41, 30, 22, 15, 10, 6, 4, 2, 1, 0, 0, 0 };
+  static const uint8_t WINS[6] = { 3, 3, 2, 1, 0, 0 }, PODS[6] = { 6, 6, 5, 4, 2, 1 };
+  champ.n = 0;
+  for (int k = 0; k < n; ++k) {
+    ChampRow* r = champFind(rosterCode(idx[k]), true);
+    if (!r) break;
+    r->pts = PTS[k]; r->starts = SEASON_RACES - 1;
+    r->wins = k < 6 ? WINS[k] : 0; r->pods = k < 6 ? PODS[k] : 0;
+    r->best = (uint8_t)(k < 4 ? 1 : (k < 6 ? 3 : k + 1));
+  }
+  champ.raceNo = SEASON_RACES - 1;
+  Serial.printf("Test: the next race is the season finale (season %u), nothing will be saved\n", champ.season);
+}
+
 static void champTick() {
+  if (phase == RP_RESULTS && !champRecorded && champTest) champTestRan = true;
   if (phase == RP_RESULTS && !champRecorded) champRecordRace();
 }

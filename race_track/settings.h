@@ -60,6 +60,8 @@ static void loadSettings() {
     if (prefs.getBytesLength("drv") == sizeof(b) && prefs.getBytes("drv", &b, sizeof(b)) == sizeof(b)) {
       for (int i = 0; i < MAX_CARS; ++i) { memcpy(customCode[i], b.code[i], 4); customCode[i][3] = 0; }
     } else defaultCustomDrivers();
+    if (prefs.getBytesLength("liv") != sizeof(customLivery) || prefs.getBytes("liv", customLivery, sizeof(customLivery)) != sizeof(customLivery))
+      memset(customLivery, 0, sizeof(customLivery));          // team colours until the user picks
   }
   prefs.end();
   if (camMode >= CAM_MODE_COUNT) camMode = 0;
@@ -86,6 +88,7 @@ static void saveSettings() {
     DriverBlob b;
     memcpy(b.code, customCode, sizeof(b.code)); memset(b.unused, 0, sizeof(b.unused));
     prefs.putBytes("drv", &b, sizeof(b));
+    prefs.putBytes("liv", customLivery, sizeof(customLivery));
   }
   prefs.end();
 }

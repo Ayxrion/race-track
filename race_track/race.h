@@ -24,6 +24,10 @@ static float scT = 0;                         // how long the safety car has bee
 static int   scLeadLap = -1;                  // the leader's lap when it pulled off (racing resumes at the line)
 static int   scOutLap = 0;                    // the leader's lap when it came out (it stays out for a lap at least)
 static char  gridMsg[2][56] = { "", "" };     // ticker lines while the cars sit on the grid (pole, the title race)
+// The last pit stop, for the TV caption (ui.h): who, when it ended (simTime), how long, with repairs.
+static int   pitCapCar = -1;
+static float pitCapT = -100, pitCapSecs = 0;
+static bool  pitCapRep = false;
 
 // ─── Event ticker ─────────────────────────────────────────────────────────────
 static char     evMsg[56] = "";
@@ -90,6 +94,7 @@ static void fmtLapTime(char* out, size_t n, float t) {
 
 // ─── Race control ─────────────────────────────────────────────────────────────
 static void startRace(int nCars, uint8_t series, uint32_t seed) {
+  pitCapCar = -1; pitCapT = -100;
   allowRetire = raceLaps > 0;                 // endless races: damage slows a car, but nobody is put out
   simLaps = raceLaps;                         // for planning pit stops
   setupCars(nCars, series, seed);
@@ -182,6 +187,7 @@ static void updateRace(float dt) {
       case EV_GRAVEL:  if (A.pos <= 6) { snprintf(b, sizeof(b), "%s runs into the gravel", A.code); raceEvent(b, 6.0f); } break;
       case EV_PIT:     if (phase == RP_RACE) { Serial.printf("RL PIT %.1f %s lap %d P%d wear %.2f dmg %.2f\n", raceTime, A.code, A.lap, A.pos, A.wear, A.dmg);
                          if (A.pos <= 6) { snprintf(b, sizeof(b), "%s pits from P%d", A.code, A.pos); raceEvent(b, 2.0f); } } break;
+      case EV_PITDONE: if (phase == RP_RACE) { pitCapCar = ev.a; pitCapT = simTime; pitCapSecs = A.pitStopT; pitCapRep = A.pitStopT > 3.1f; } break;
       case EV_DAMAGE:  snprintf(b, sizeof(b), "%s is damaged and losing time", A.code); raceEvent(b, 2.0f); break;
       case EV_OUT:
         spinCamCar = ev.a; lastEventT = -100;

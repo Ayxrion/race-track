@@ -21,6 +21,7 @@
 #include "ui.h"
 
 #include <esp_async_memcpy.h>
+#include <esp_cache.h>
 
 // ─── Strip presenter: GDMA copy SRAM strip → PSRAM framebuffer ────────────────
 static async_memcpy_handle_t dmaH = nullptr;
@@ -158,6 +159,65 @@ static void fatal(const char* msg) {
   for (;;) delay(1000);
 }
 
+// ─── Serial test commands (USB) ───────────────────────────────────────────────
+//   finale [laps]          the next race ends the season, in a title fight (champ.h; saves nothing)
+//   next [laps]            skip to the next race (laps, if given, for that race only)
+//   shot                   the screen at half size, as hex RGB565 rows between "SHOT w h" and "SHOT END"
+//   panel <page> [slot] [colours]   open a settings page (-1 closes it); 4 = a slot's colours
+static int testLaps = 0;
+
+static void serialScreenshot() {
+  if (!fbBase) { Serial.println("SHOT none"); return; }
+  waitStripFree(0); waitStripFree(1);                // the last strips have landed
+  // the framebuffer is written by DMA: drop whatever the cache holds of it before reading
+  const uintptr_t a0 = (uintptr_t)fbBase & ~(uintptr_t)63;
+  const uintptr_t a1 = ((uintptr_t)fbBase + (uintptr_t)SCREEN_W * SCREEN_H * 2 + 63) & ~(uintptr_t)63;
+  esp_cache_msync((void*)a0, a1 - a0, ESP_CACHE_MSYNC_FLAG_DIR_M2C);
+  Serial.printf("SHOT %d %d\n", SCREEN_W / 2, SCREEN_H / 2);
+  static char line[SCREEN_W / 2 * 4 + 2];
+  static const char HX[] = "0123456789abcdef";
+  for (int y = 0; y < SCREEN_H; y += 2) {
+    const uint16_t* row = (const uint16_t*)(fbBase + (size_t)y * SCREEN_W * 2);
+    char* p = line;
+    for (int x = 0; x < SCREEN_W; x += 2) {
+      const uint16_t v = row[x];
+      *p++ = HX[v >> 12]; *p++ = HX[(v >> 8) & 15]; *p++ = HX[(v >> 4) & 15]; *p++ = HX[v & 15];
+    }
+    *p++ = '\n';
+    Serial.write((const uint8_t*)line, p - line);
+  }
+  Serial.println("SHOT END");
+}
+
+static void handleSerialCmd(char* s) {
+  char* tok[4] = { nullptr }; int nt = 0;
+  for (char* t = strtok(s, " "); t && nt < 4; t = strtok(nullptr, " ")) tok[nt++] = t;
+  if (!nt) return;
+  const int a1 = nt > 1 ? (int)strtol(tok[1], nullptr, 0) : 0, a2 = nt > 2 ? (int)strtol(tok[2], nullptr, 0) : 0;
+  if (!strcmp(tok[0], "finale")) { testLaps = clampi(a1, 0, 99); champTestFinale(carSetting); nextRaceRequested = true; }
+  else if (!strcmp(tok[0], "next")) { testLaps = clampi(a1, 0, 99); nextRaceRequested = true; Serial.println("Test: next race"); }
+  else if (!strcmp(tok[0], "shot")) serialScreenshot();
+  else if (!strcmp(tok[0], "panel")) {
+    if (nt < 2 || a1 < 0) { panelOpen = false; panelPage = 0; }
+    else {
+      panelOpen = true; panelPage = clampi(a1, 0, 4);
+      editSlot = clampi(a2, 0, MAX_CARS - 1);
+      editLiv = nt > 3 ? (uint8_t)strtol(tok[3], nullptr, 0) : customLivery[editSlot];   // shown only, not saved
+      memcpy(editBuf, customCode[editSlot], 4); editBuf[3] = 0;
+    }
+    Serial.printf("Test: panel %s page %d\n", panelOpen ? "open" : "closed", panelPage);
+  }
+  else Serial.printf("Commands: finale [laps], next [laps], shot, panel <page> [slot] [colours] (got '%s')\n", tok[0]);
+}
+static void pollSerialCmd() {
+  static char buf[40]; static int n = 0;
+  while (Serial.available() > 0) {
+    const int ch = Serial.read();
+    if (ch == '\n' || ch == '\r') { buf[n] = 0; if (n) handleSerialCmd(buf); n = 0; }
+    else if (n < (int)sizeof(buf) - 1) buf[n++] = (char)ch;
+  }
+}
+
 // Build the next circuit and line the cars up on the grid.
 static void beginNextRace() {
   int sel; uint32_t seed; uint8_t series;
@@ -168,6 +228,7 @@ static void beginNextRace() {
   generateWorld(sel, seed, splashProgress);
   Serial.printf("World generated in %lu ms\n", (unsigned long)(millis() - t0));
   raceLaps = LAPS_OPTS[lapsIdx];
+  if (testLaps > 0) { raceLaps = testLaps; testLaps = 0; }
 #ifdef RT_QUICK_RACE
   raceLaps = 1;
 #endif
@@ -297,6 +358,7 @@ static uint32_t rowsRendered = 0;
 void loop() {
   simJoin();                                   // the sim batch kicked last frame has finished
   champTick();                                 // a race just finished: score it (the sim is idle)
+  pollSerialCmd();
   if (nextRaceRequested) { beginNextRace(); lastFrameMs = millis(); }
 
   uint32_t now = millis();
