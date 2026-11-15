@@ -1,10 +1,44 @@
 # Race Track
 
-A top-down desktop race track for the **Elecrow CrowPanel 7.0"** (ESP32-S3, 800×480 RGB, GT911 touch).
-AI cars race around a circuit in the background, with lap timing, a leaderboard, weather, and day and night.
-It uses the same board setup and rendering approach as the koi pond (Desktop Aquarium V2), but it's a separate project.
+**An always-on motor racing world for your desk.** AI drivers race wheel to wheel around real and generated circuits on an [Elecrow CrowPanel 7.0"](https://www.elecrow.com/) (ESP32-S3, 800×480 touch screen), with full championship seasons, careers, live weather and a TV-style broadcast, at around 29 fps.
 
-## What's on the track
+![A battle for the lead, with the TV caption in the bottom right](docs/screenshots/battle.png)
+
+## Highlights
+
+- **Real racing, not a screensaver.** Every car is simulated with grip, braking, slipstream and dirty air. Drivers pick their own lines, defend, attack round the outside, make mistakes, spin, crash and take damage.
+- **Eleven real circuits** (Monza, Spa, Silverstone, Interlagos, Red Bull Ring, COTA, Zandvoort, Hungaroring, Watkins Glen, Imola, Road America), plus a new procedurally generated circuit every other race.
+- **Six kinds of racing:** Formula, GT, Touring, Endurance (prototypes and GTs together), 1960s Classics and panel Vans.
+- **Race weekends:** qualifying sets the grid, the start lights go out, and there are pit stops, tyre wear, a safety car after a big crash, and the chequered flag.
+- **Wet races:** a race is wet when it's raining where you are (live weather from OpenWeatherMap), and passing showers bring tyre gambles: who comes in for wets, and who stays out on slicks?
+- **Championships and careers:** 10-race seasons with points and standings, a champion crowned in the last race, and driver careers that carry on from season to season, with rookies coming in and veterans retiring. Career records are kept for every driver.
+- **Your own drivers:** name up to 20 drivers and pick their car colours.
+- **A TV broadcast:** an automatic director cuts between battles, the leader and the grandstands, with captions ("Battle for P3", the gap, pit-stop times), a live leaderboard and ticker, and replays of crashes and passes for the lead.
+- **Day and night** follow your local time: floodlights, headlights and camera flashes in the stands after dark.
+- **Updates itself** from this repo's GitHub releases.
+
+## Screenshots
+
+| | |
+|---|---|
+| ![Rain and a pit stop for wets](docs/screenshots/rain-pit.png) | ![A replay at night](docs/screenshots/replay.png) |
+| A shower: cars pit for wets (blue marks on the leaderboard) | A replay at night, with the REPLAY badge |
+| ![Race results with points](docs/screenshots/results.png) | ![The champion's standings](docs/screenshots/champion.png) |
+| The results, with points and notes | The last race of the season crowns the champion |
+| ![Picking a driver's colours](docs/screenshots/colours.png) | ![Driver records](docs/screenshots/records.png) |
+| Your own drivers' colours | Career records |
+
+*Screenshots are taken on the device at half size.*
+
+## Quick start
+
+1. Get a **CrowPanel 7.0"** (the ESP32-S3 model with the 800×480 RGB screen).
+2. Copy `race_track/wifi_config.h.template` to `race_track/wifi_config.h` and fill in your Wi-Fi, an [OpenWeatherMap](https://openweathermap.org/api) key (the free tier is enough), your location and your time zone.
+3. Build and flash it over USB (see [Building](#building-arduino-ide)).
+4. Optional: for automatic updates from your own fork, point `race_track/version.h` at it and add the same details as Actions secrets (see [OTA releases](#ota-releases)). Every version tag you push is then built and installed on the device by itself.
+5. Leave it running. The TV camera takes over when nobody touches the screen.
+
+## What's on the track in detail
 
 - **Circuits**: eleven real-circuit layouts (approximate), plus procedurally generated ones.
   The presets are Monza, Spa-Francorchamps, Silverstone, Interlagos, Red Bull Ring, Circuit of the Americas, Zandvoort, Hungaroring, Watkins Glen, Imola and Road America.
@@ -47,7 +81,7 @@ It uses the same board setup and rendering approach as the koi pond (Desktop Aqu
   The result is shown, then the championship standings, and then the next circuit is built.
   Races can also be endless.
 - **Championship**: a season is 10 races, scored 25-18-15-12-10-8-6-4-2-1 by place in class, so in Endurance the first GT scores as much as the first prototype. The prototypes go to whoever has had the fewest so far, and each driver keeps their team colours for the season.
-  The standings show points, wins and places gained or lost; the last race crowns the champion, and the next one starts a new season with new favourites. A title clinched early is called out.
+  The standings show points, wins and places gained or lost; the last race crowns the champion, and the next one starts a new season. A title clinched early is called out.
   Endless races don't count. The standings are saved to flash, so a season carries on after a reboot.
 - **Careers**: drivers keep their pace and skill from one season to the next. In the standard field everyone gets a year older each season: young drivers improve (more so with talent), drivers in their prime hold steady, and veterans fade and retire, with rookies taking their seats (the first grid of a season says who). Your own Custom drivers never retire or age; their form rises and falls from season to season instead.
 - **Driver records**: career starts, wins, podiums, poles, fastest laps, titles and the longest winning run, kept across seasons (Settings → *Records*).
@@ -96,7 +130,6 @@ Slots past the number of cars sit out.
 
 ## Building (Arduino IDE)
 
-Same toolchain as the koi pond:
 
 1. **ESP32 core**: Espressif `esp32` boards package **3.3.0**.
 2. **Libraries**: **LovyanGFX 1.2.21, the FIXED copy** (the two patched files are in [`lovyangfx-fix/`](lovyangfx-fix/); copy them over the library's `src/lgfx/v1/platforms/esp32s3/` files again whenever they change), and **ArduinoJson 6.21.x**. Besides making the RGB panel work on core 3.x, `Bus_RGB.cpp` works around an ESP-IDF 5.5 driver bug that could leave the picture shifted sideways and flickering until a reboot. The serial stats print `rgb: resync on` when the workaround is active.
@@ -158,8 +191,8 @@ race_track/
 lovyangfx-fix/       patched LovyanGFX esp32s3 files
 ```
 
-Rendering works like the koi pond's.
-The scenery is baked once per circuit into an 8-bit palette-indexed map in PSRAM, so lighting, wet track, snow and lightning only change a 256-entry palette.
+How the rendering keeps up on a microcontroller:
+the scenery is baked once per circuit into an 8-bit palette-indexed map in PSRAM, so lighting, wet track, snow and lightning only change a 256-entry palette.
 Each frame is composed in SRAM strips, the map rows come in by GDMA prefetch, and only changed rows are copied to the framebuffer.
 
 On top of that:
