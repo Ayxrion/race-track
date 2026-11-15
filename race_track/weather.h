@@ -36,7 +36,8 @@ static volatile bool             _weatherKick   = false;   // request an immedia
 static const uint32_t _WEATHER_INTERVAL       = 5UL * 60UL * 1000UL;
 static const uint32_t _WEATHER_RETRY_INTERVAL = 60UL * 1000UL;
 
-static bool weatherConfigured() { return sizeof(WEATHER_API_KEY) > 1; }
+// Live weather needs a key and a location (a release build fills them in from the repo's secrets).
+static bool weatherConfigured() { return sizeof(WEATHER_API_KEY) > 1 && sizeof(WEATHER_LAT) > 1 && sizeof(WEATHER_LON) > 1; }
 
 // Ensures WiFi is connected, reusing an existing connection if still up.
 static bool _wifiEnsureConnected() {
@@ -52,7 +53,7 @@ static bool _wifiEnsureConnected() {
   return true;
 }
 
-// Set when the server rejects the API key: retrying can't help, and every TLS
+// Set when the server rejects the API key or the location: retrying can't help, and every TLS
 // connection briefly takes most of the free internal heap from the renderer.
 static bool _weatherKeyBad = false;
 
@@ -73,8 +74,10 @@ static bool _fetchWeather(WeatherCondition& out) {
   if (http.begin(client, url)) {
     http.setTimeout(12000);
     int code = http.GET();
-    if (code != HTTP_CODE_OK) Serial.printf("Weather: HTTP %d%s\n", code, code == 401 ? " (API key rejected - not retrying until the next boot)" : "");
-    if (code == 401) _weatherKeyBad = true;
+    const bool rejected = code == 401 || code == 400 || code == 404;   // a bad key, or a location it can't use
+    if (code != HTTP_CODE_OK) Serial.printf("Weather: HTTP %d%s\n", code, code == 401 ? " (API key rejected - not retrying until the next boot)"
+                                                              : rejected ? " (location rejected - not retrying until the next boot)" : "");
+    if (rejected) _weatherKeyBad = true;
     if (code == HTTP_CODE_OK) {
       String body = http.getString();
       DynamicJsonDocument doc(1024);
