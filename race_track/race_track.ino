@@ -166,6 +166,7 @@ static void fatal(const char* msg) {
 //   panel <page> [slot] [colours]   open a settings page (-1 closes it); 4 = a slot's colours
 //   shower [in] [laps] [wet]        rain in this race: starting in <in> laps (0), for <laps> (3), this wet (1)
 //   newseason [laps]                the next race starts a new season (careers move on); saves nothing
+//   replay                          replay the leader's last few seconds (a moving TV camera must be on)
 static int testLaps = 0;
 
 static void serialScreenshot() {
@@ -207,6 +208,10 @@ static void handleSerialCmd(char* s) {
     showerStorm = false;
     Serial.printf("Test: shower from lap %.1f to %.1f, wet %.2f\n", showerFrom, showerTo, showerLevel);
   }
+  else if (!strcmp(tok[0], "replay")) {
+    rpLastT = -100; replayRequest(order[0], 9, raceTime - 1.0f, "test replay");
+    Serial.printf("Test: replay requested (%s)\n", rpReqCar >= 0 ? "ok" : "not now");
+  }
   else if (!strcmp(tok[0], "newseason")) {
     testLaps = clampi(a1, 0, 99); champTest = true; champTestRan = false; champ.raceNo = SEASON_RACES; nextRaceRequested = true;
     Serial.println("Test: the next race starts a new season (nothing will be saved)");
@@ -221,7 +226,7 @@ static void handleSerialCmd(char* s) {
     }
     Serial.printf("Test: panel %s page %d\n", panelOpen ? "open" : "closed", panelPage);
   }
-  else Serial.printf("Commands: finale [laps], next [laps], shot, panel <page> [slot] [colours], shower [in] [laps] [wet], newseason [laps] (got '%s')\n", tok[0]);
+  else Serial.printf("Commands: finale [laps], next [laps], shot, panel <page> [slot] [colours], shower [in] [laps] [wet], newseason [laps], replay (got '%s')\n", tok[0]);
 }
 static void pollSerialCmd() {
   static char buf[40]; static int n = 0;
@@ -403,6 +408,7 @@ void loop() {
   prepareCarsFrame();
   prepareUI();
   snapshotParticles();
+  if (rpPlaying) pdN = 0;                      // a replay: the smoke and sparks are live, so leave them out
   markDynamicRows();
   simStart(steps);
   PROF(1);

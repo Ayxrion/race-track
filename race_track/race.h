@@ -118,6 +118,7 @@ static void startRace(int nCars, uint8_t series, uint32_t seed) {
   prevTop[0] = prevTop[1] = prevTop[2] = -1;
   evMsg[0] = 0;
   scState = SC_NONE; scShow = false; scT = 0; scLeadLap = -1;
+  replayReset();
   if (showersOn && raceLaps >= 3 && baseWeather() <= WEATHER_CLOUDY && frand() < SHOWER_P) {
     showerFrom = raceLaps * frandr(0.15f, 0.55f);
     showerTo = showerFrom + fmx(1.2f, raceLaps * frandr(0.12f, 0.40f));
@@ -184,6 +185,7 @@ static void updateRace(float dt) {
   raceTime += dt;
   updateShower();
   updateCars(dt, true, phase == RP_RESULTS);
+  if (phase == RP_RACE) replayRecord();                 // the last few seconds, for replays
 
   // Chequered flag when the leader completes the last lap
   if (phase == RP_RACE && raceLaps > 0 && cars[order[0]].lap >= raceLaps) {
@@ -217,7 +219,9 @@ static void updateRace(float dt) {
     switch (ev.type) {
       case EV_SPIN:    snprintf(b, sizeof(b), "%s spins!", A.code); raceEvent(b, 1.0f); spinCamCar = ev.a; break;
       case EV_WALL:    snprintf(b, sizeof(b), "%s hits the wall!", A.code); raceEvent(b, 0.5f); spinCamCar = ev.a; break;
-      case EV_CONTACT: snprintf(b, sizeof(b), "Contact! %s and %s", A.code, cars[ev.b].code); raceEvent(b, 1.0f); spinCamCar = ev.b; break;
+      case EV_CONTACT: snprintf(b, sizeof(b), "Contact! %s and %s", A.code, cars[ev.b].code); raceEvent(b, 1.0f); spinCamCar = ev.b;
+                       if (phase == RP_RACE && (A.pos <= 6 || cars[ev.b].pos <= 6)) { snprintf(b, sizeof(b), "contact with %s", A.code); replayRequest(ev.b, 1, raceTime, b); }
+                       break;
       case EV_GRAVEL:  if (A.pos <= 6) { snprintf(b, sizeof(b), "%s runs into the gravel", A.code); raceEvent(b, 6.0f); } break;
       case EV_PIT:     if (phase == RP_RACE) { Serial.printf("RL PIT %.1f %s lap %d P%d wear %.2f dmg %.2f\n", raceTime, A.code, A.lap, A.pos, A.wear, A.dmg);
                          if (A.pos <= 6) { snprintf(b, sizeof(b), "%s pits from P%d", A.code, A.pos); raceEvent(b, 2.0f); } } break;
@@ -228,9 +232,11 @@ static void updateRace(float dt) {
                            if (A.pos <= 8) { snprintf(b, sizeof(b), A.wets ? "%s switches to wets" : (wetAmt > 0.3f ? "%s gambles on slicks!" : "%s is back on slicks"), A.code); raceEvent(b, 2.0f); }
                          }
                        } break;
-      case EV_DAMAGE:  snprintf(b, sizeof(b), "%s is damaged and losing time", A.code); raceEvent(b, 2.0f); break;
+      case EV_DAMAGE:  snprintf(b, sizeof(b), "%s is damaged and losing time", A.code); raceEvent(b, 2.0f);
+                       if (phase == RP_RACE) replayRequest(ev.a, 2, raceTime, "a heavy hit"); break;
       case EV_OUT:
         spinCamCar = ev.a; lastEventT = -100;
+        if (phase == RP_RACE) replayRequest(ev.a, 3, raceTime, "out of the race");
         if (phase == RP_RACE && scState == SC_NONE && raceLaps - cars[order[0]].lap >= 3 && raceTime > 12.0f) {
           scDeploy(); scT = 0; scOutLap = cars[order[0]].lap;
           snprintf(b, sizeof(b), "SAFETY CAR - %s is out of the race", A.code); raceEvent(b, 0, 5000);
@@ -259,12 +265,13 @@ static void updateRace(float dt) {
   for (int k = 0; k < 3 && k < numCars; ++k) {
     int now = order[k];
     if (prevTop[k] >= 0 && now != prevTop[k] && !early && cars[prevTop[k]].pos > k + 1) {
-      if (k == 0) snprintf(b, sizeof(b), "%s takes the lead!", cars[now].code);
+      if (k == 0) { snprintf(b, sizeof(b), "%s takes the lead!", cars[now].code); replayNoteLeader(now); }
       else        snprintf(b, sizeof(b), "%s passes %s for P%d", cars[now].code, cars[prevTop[k]].code, k + 1);
       raceEvent(b, 4.0f);
     }
     prevTop[k] = now;
   }
+  replayCheckLeader(order[0]);
 }
 
 static int leaderLapDisplay() {

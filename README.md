@@ -53,6 +53,7 @@ It uses the same board setup and rendering approach as the koi pond (Desktop Aqu
 - **Driver records**: career starts, wins, podiums, poles, fastest laps, titles and the longest winning run, kept across seasons (Settings → *Records*).
   The results call out first wins and podiums, winning runs, wins from far back and big climbs, and the grid ticker announces pole.
 - **Timing**: positions, gaps to the leader (or laps down), cars in the pits, retirements, last laps, the fastest lap, and a ticker for lead changes, passes for the podium, fastest laps, spins, damage, pit stops and the safety car.
+- **Replays**: the last few seconds of every car are kept, and after a big moment (a car out of the race, a heavy hit, contact among the top six, or a pass for the lead that sticks) the TV camera replays it a couple of seconds later: from 3.5 s before to 2 s after, slowed down around the moment, with a blinking **REPLAY** badge and a caption saying what happened. The race carries on underneath (the leaderboard stays live), and the camera cuts back afterwards. A crash can be replayed every 30 s of racing at most, a pass or contact every 2 minutes. Replays play in the moving camera modes (not Grandstands or Whole track), and touching the screen ends one.
 - **TV captions**: a few seconds after the TV camera cuts to a fight, a caption in the bottom right shows *Battle for P3* (or *for the lead*) with both drivers and the live gap; on one driver it shows their place, the lap and the gap to the car ahead (or their lead). After a front-runner's pit stop it shows how long they stood still, and whether they had repairs.
 - **Weather** from OpenWeatherMap: rain and storms make the track darker and wetter and slow the cars, which throw up spray. Storms add lightning, snow whitens the grass, and fog washes the view out.
 - **Day and night** from NTP time. At night the circuit is floodlit, cars run headlights and tail lights, and camera flashes go off in the grandstands.
@@ -72,7 +73,7 @@ It uses the same board setup and rendering approach as the koi pond (Desktop Aqu
 
 **Camera** (in settings) picks what the TV camera shows:
 
-- **TV director** (default): cuts between the whole track, the closest battle, the leader, a random driver, a grandstand corner, and replays of spins and contact.
+- **TV director** (default): cuts between the whole track, the closest battle, the leader, a random driver and a grandstand corner, cuts live to spins and contact, and shows replays.
 - **Follow leader**: stays on whoever is leading, through lead changes.
 - **Closest battle**: the tightest fight on track, moving to a new one when it breaks up.
 - **Random driver**: rides with one car for 20–40 s, then picks another.
@@ -123,6 +124,7 @@ Test commands over the same serial port (one per line):
 | `shot` | Send the screen at half size as hex RGB565 rows between `SHOT w h` and `SHOT END` (about 35 s; the race pauses meanwhile). |
 | `panel <page> [slot] [colours]` | Open a settings page: 0 settings, 1 drivers, 2 a name, 3 records, 4 a slot's colours; -1 closes it. |
 | `shower [in] [laps] [wet]` | Rain in this race: starting in *in* laps (0), for *laps* (3), this wet (0.1-1, default 1). |
+| `replay` | Replay the leader's last few seconds now (with a moving TV camera on). |
 | `newseason [laps]` | The next race starts a new season, so careers move on. Nothing is saved: the real standings, records and careers are loaded back after it. |
 
 ## OTA releases
@@ -147,6 +149,7 @@ race_track/
   race.h             grid, start lights, laps, chequered flag, results, event ticker
   champ.h            championship standings and driver records (NVS)
   careers.h          careers: ageing, form, retirements and rookies between seasons
+  replay.h           the replay recorder and player
   settings.h         NVS persistence, choosing the next race
   ui.h               touch, buttons, settings panel, leaderboard, TV camera
   ota_update.h       GitHub-release OTA

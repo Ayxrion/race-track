@@ -461,7 +461,7 @@ static void pollTouch() {
 // ─── TV camera ────────────────────────────────────────────────────────────────
 // camMode picks which shots it takes: the director mixes them all (and cuts to
 // spins), the others stick to one kind of shot.
-enum TvMode : uint8_t { TV_OVERVIEW, TV_BATTLE, TV_LEADER, TV_CORNER, TV_EVENT, TV_GRID, TV_FOLLOW };
+enum TvMode : uint8_t { TV_OVERVIEW, TV_BATTLE, TV_LEADER, TV_CORNER, TV_EVENT, TV_GRID, TV_FOLLOW, TV_REPLAY };
 static struct { TvMode mode; int car; int car2; uint32_t until, since; float tx, ty, tz; int stand; } tv = { TV_OVERVIEW, 0, -1, 0, 0, WORLD_W / 2, WORLD_H / 2, ZOOM_MIN, -1 };
 
 static void cutToAutoCam() {
@@ -554,8 +554,25 @@ static void pickTvShot(uint32_t now) {
   }
 }
 
+// The replay's camera: on the car whose moment it is, at the recorded pose, looking a little ahead.
+static void replayCam(bool snap) {
+  int ka, kb; float u;
+  if (rpCar < 0 || !replayFrameAt(rpPlayT, ka, kb, u) || rpCar >= rpFrame(ka).n) return;
+  float x, y, h; uint8_t fl; replayPose(ka, kb, u, rpCar, x, y, h, fl);
+  const float tx = x + fastCos(h) * 18.0f, ty = y + fastSin(h) * 18.0f;
+  cam.animZoom = false; cam.vx = cam.vy = 0;
+  if (snap) { cam.zoom = tv.tz; cam.x = tx; cam.y = ty; }
+  else { cam.zoom = lerpf(cam.zoom, tv.tz, 0.05f); cam.x = lerpf(cam.x, tx, 0.2f); cam.y = lerpf(cam.y, ty, 0.2f); }
+  clampCamera();
+}
+
 static void updateTvCam() {
   uint32_t now = millis();
+  // Replays belong to the TV camera's moving shots (not the still Grandstands or Whole track): a touch,
+  // one of those cameras, or the finish ends one.
+  const bool rpOk = autoCam && camMode != CAM_STANDS && camMode != CAM_TRACK && phase == RP_RACE;
+  if (rpPlaying && !rpOk) { rpPlaying = false; rpHead = rpCount = 0; tv.until = 0; }
+  if (rpReqCar >= 0 && (!rpOk || raceTime > rpReqT + 6.0f)) rpReqCar = -1;
   if (!autoCam) {
     if (followCar >= 0 && followCar < numCars) { camChase(cars[followCar], cam.animZoom ? cam.targetZoom : cam.zoom); return; }
     if (!panelOpen && ts.mode == TM_NONE && now - lastTouchMs > AUTOCAM_IDLE_MS) { autoCam = true; tv.until = 0; followCar = -1; }
@@ -567,6 +584,16 @@ static void updateTvCam() {
     if (camMode == CAM_DIRECTOR && tv.mode != TV_EVENT && tv.mode != TV_GRID) { tv.mode = TV_EVENT; tv.car = spinCamCar; tv.car2 = -1; tv.tz = 2.0f; tv.since = now; tv.until = now + 9000; }
     spinCamCar = -1;
   }
+  if (rpPlaying) {                               // a replay: play it out, then back to live
+    if (replayStep(FRAME_MS / 1000.0f)) { replayCam(false); return; }
+    tv.until = 0;
+  } else if (rpReqCar >= 0 && tv.mode != TV_GRID && replayStart()) {
+    tv.mode = TV_REPLAY; tv.car = rpCar; tv.car2 = -1; tv.tz = 2.1f; tv.since = now; tv.until = now + 60000;
+    replayCam(true);
+    Serial.printf("TV: replay %s %s\n", cars[rpCar].code, rpText);
+    return;
+  }
+  if (tv.mode == TV_REPLAY && !rpPlaying) tv.until = 0;
   if (tv.mode == TV_LEADER) tv.car = order[0];  // stay on whoever leads now
   if (camMode == CAM_BATTLE && tv.mode == TV_BATTLE && now - tv.since > 5000 &&
       (tv.car2 < 0 || fabsf(cars[tv.car2].dist - cars[tv.car].dist) > 80)) tv.until = 0;   // fight's over: find another
@@ -609,7 +636,7 @@ static void updateTvCam() {
 // The car the camera is on, for the highlight ring and name tag.
 static int cameraCar() {
   if (followCar >= 0) return followCar;
-  if (autoCam && (tv.mode == TV_BATTLE || tv.mode == TV_LEADER || tv.mode == TV_EVENT || tv.mode == TV_FOLLOW) && cam.zoom > 1.1f) return tv.car;
+  if (autoCam && (tv.mode == TV_BATTLE || tv.mode == TV_LEADER || tv.mode == TV_EVENT || tv.mode == TV_FOLLOW || tv.mode == TV_REPLAY) && cam.zoom > 1.1f) return tv.car;
   return -1;
 }
 
@@ -785,9 +812,11 @@ static int      ordR[MAX_CARS];
 #define L3_SHOT_T0 1200u            // ms after a cut before it appears...
 #define L3_SHOT_T1 8000u            // ...and when it goes
 #define L3_PIT_T   5.0f             // s a pit stop caption stays up
-enum L3Kind : uint8_t { L3_NONE, L3_BATTLE, L3_DRIVER, L3_PIT };
+enum L3Kind : uint8_t { L3_NONE, L3_BATTLE, L3_DRIVER, L3_PIT, L3_REPLAY };
 static struct { L3Kind kind; char head[32], a[8], b[8], mid[28]; uint32_t ca, cb; } l3 = {};
 static int      l3Key = -1;
+static bool     rpBadge = false;             // the REPLAY badge: shown this frame (a snapshot of rpPlaying)
+static uint32_t rpBadgeLast = 0;
 static uint32_t l3Since = 0, l3Built = 0, l3LastOn = 0;
 
 static float gapSecs(const Car& front, const Car& back) {
@@ -801,7 +830,8 @@ static void prepareLowerThird(int camC) {
     const bool pitOn = pitCapCar >= 0 && pitCapCar < numCars && simTime - pitCapT < L3_PIT_T
                        && (cars[pitCapCar].pos <= 8 || pitCapCar == camC);
     auto racingCar = [](int i) { return i >= 0 && i < numCars && !cars[i].finished && !cars[i].out && cars[i].pit < 2; };
-    if (pitOn) { kind = L3_PIT; ka = pitCapCar; }
+    if (rpPlaying && rpCar >= 0 && rpCar < numCars) { kind = L3_REPLAY; ka = rpCar; }
+    else if (pitOn) { kind = L3_PIT; ka = pitCapCar; }
     else if (racingCar(camC)) {
       // the camera's car: in a fight (the battle shot's pair, or the car right ahead or behind within
       // a second), or on its own
@@ -824,6 +854,7 @@ static void prepareLowerThird(int camC) {
   // A new camera shot (or a new pit stop) starts the clock. Within one shot the caption follows what
   // happens (a lead change, a fight starting) without starting over.
   const int key = kind == L3_NONE ? -1
+                : kind == L3_REPLAY ? (int)(0x50000000u | ((uint32_t)(rpMoment * 10) & 0xFFFFFu))
                 : kind == L3_PIT ? (int)(0x40000000u | ((uint32_t)(pitCapT * 10) & 0xFFFFFu))
                 : (autoCam && followCar < 0) ? (int)(tv.since & 0x0FFFFFFFu) : (int)(0x20000000u | (uint32_t)followCar);
   if (key != l3Key) { l3Key = key; l3Since = now; l3Built = 0; }
@@ -838,7 +869,10 @@ static void prepareLowerThird(int camC) {
   const Car& A = cars[ka];
   snprintf(l3.a, sizeof(l3.a), "%s", A.code); l3.ca = A.c1;
   l3.b[0] = 0; l3.cb = 0;
-  if (kind == L3_PIT) {
+  if (kind == L3_REPLAY) {
+    snprintf(l3.head, sizeof(l3.head), "REPLAY  -  P%d", A.pos);
+    snprintf(l3.mid, sizeof(l3.mid), "%s", rpText);
+  } else if (kind == L3_PIT) {
     snprintf(l3.head, sizeof(l3.head), "PIT STOP  -  P%d", A.pos);
     const char* tyre = pitCapTyre == 1 ? "wets" : (pitCapTyre == 2 ? "slicks" : "new tyres");
     if (pitCapRep) snprintf(l3.mid, sizeof(l3.mid), "%.1f s  %s + repairs", pitCapSecs, pitCapTyre ? tyre : "tyres");
@@ -871,9 +905,9 @@ static void prepareLowerThird(int camC) {
 static void drawLowerThird() {
   if (l3.kind == L3_NONE || !stripHit(L3_Y, L3_Y + L3_H)) return;
   blendRoundRect(L3_X, L3_Y, L3_W, L3_H, 8, 0x06090Cu, 25);
-  const uint32_t accent = l3.kind == L3_PIT ? 0xF0A020u : (l3.kind == L3_BATTLE ? 0xE02A20u : 0xF0F4F4u);
+  const uint32_t accent = l3.kind == L3_PIT ? 0xF0A020u : (l3.kind == L3_BATTLE || l3.kind == L3_REPLAY ? 0xE02A20u : 0xF0F4F4u);
   if (stripHit(L3_Y + 8, L3_Y + L3_H - 8)) canvas.fillRect(L3_X + 5, L3_Y + 8, 3, L3_H - 16, accent);
-  drawText(l3.head, L3_X + 16, L3_Y + 12, l3.kind == L3_BATTLE ? 0xF0C840u : 0xAEBAC2u, &fonts::DejaVu9, textdatum_t::middle_left);
+  drawText(l3.head, L3_X + 16, L3_Y + 12, l3.kind == L3_BATTLE ? 0xF0C840u : (l3.kind == L3_REPLAY ? 0xFF6A5Au : 0xAEBAC2u), &fonts::DejaVu9, textdatum_t::middle_left);
   const int ry = L3_Y + 31;
   if (stripHit(ry - 7, ry + 7)) canvas.fillRect(L3_X + 16, ry - 7, 4, 14, l3.ca);
   drawText(l3.a, L3_X + 26, ry, 0xFFFFFFu, &fonts::DejaVu12, textdatum_t::middle_left);
@@ -894,6 +928,8 @@ static void prepareUI() {
   int camC = cameraCar();
   if (camC != lbCamC) { lbCamC = camC; lbDirty = true; }
   prepareLowerThird(camC);
+  rpBadge = rpPlaying && hudOn;
+  if (rpBadge) rpBadgeLast = millis();
   memcpy(evShow, evMsg, sizeof(evShow)); evShow[sizeof(evShow) - 1] = 0;
   evShowUntil = evUntil;
   memcpy(ordR, order, sizeof(ordR));
@@ -941,6 +977,17 @@ static void drawLeaderboard() {
       for (int x = 0; x < LB_W; ++x) if (s[x] != lbKey) d[x] = s[x];
     }
   }
+}
+
+// While a replay runs: a "REPLAY" badge at the top, its dot blinking, as on TV.
+#define RPB_Y 12
+#define RPB_H 26
+static void drawReplayBadge() {
+  if (!rpBadge || !stripHit(RPB_Y, RPB_Y + RPB_H)) return;
+  const int w = 104, x = SCREEN_CX - w / 2 + (hudOn ? 60 : 0);
+  blendRoundRect(x, RPB_Y, w, RPB_H, 8, 0x06090Cu, 26);
+  if ((millis() / 450) & 1) fCircle(x + 16, RPB_Y + RPB_H / 2, 5, 0xE02A20u);
+  drawText("REPLAY", x + 30, RPB_Y + RPB_H / 2, 0xFFFFFFu, &fonts::DejaVu12, textdatum_t::middle_left);
 }
 
 static void drawStartLights() {
@@ -1401,6 +1448,7 @@ static void uiDynamicRows(void (*mark)(int, int)) {
   if (resDirty) mark(RES_Y, RES_Y + RES_H);
   if (millis() <= evShowUntil + 100) mark(SCREEN_H - 36, SCREEN_H - 6);
   if (millis() <= l3LastOn + 150) mark(L3_Y - 2, L3_Y + L3_H + 2);
+  if (millis() <= rpBadgeLast + 150) mark(RPB_Y - 2, RPB_Y + RPB_H + 2);
   if (millis() <= toastUntil + 100) mark(SCREEN_H - 78, SCREEN_H - 40);
   if (uiVisible() || millis() - lastTouchMs < UI_HIDE_MS + 200) mark(BTN[0].y - 2, BTN[0].y + BTN[0].h + 2);
   if (panelOpen) mark(PANEL_Y, PANEL_Y + PANEL_H);
@@ -1413,7 +1461,7 @@ static uint32_t uiProf[8] = {0};
 static void drawUI() {
   UIP(0, drawCarTag(cameraCar()));
   UIP(1, drawLeaderboard());
-  UIP(2, drawStartLights());
+  UIP(2, drawStartLights(); drawReplayBadge());
   UIP(3, drawResults());
   UIP(4, drawEventTicker(); drawLowerThird());
   UIP(5, drawTopButtons());

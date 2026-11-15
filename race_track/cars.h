@@ -1614,8 +1614,10 @@ static int nearestCar(float wx, float wy, float maxD) {
   return best;
 }
 
+#include "replay.h"
+
 // ─── Drawing ──────────────────────────────────────────────────────────────────
-struct CarDraw { float sx, sy, ca, sa, hl, hwd; int y0, y1; bool vis; uint32_t l1, l2, l3; };   // l1..l3: livery, lit
+struct CarDraw { float sx, sy, ca, sa, hl, hwd; int y0, y1; bool vis, brk, spin; uint32_t l1, l2, l3; };   // l1..l3: livery, lit
 static CarDraw cdraw[MAX_CARS + 1];
 // Shared car colours, lit for this frame (worked out once, not in every strip)
 static uint32_t litTyre, litGlass, litDark, litLamp, litWhite, litRack;
@@ -1623,13 +1625,17 @@ static uint32_t litTyre, litGlass, litDark, litLamp, litWhite, litRack;
 static int drawN = 0;                        // cars drawn this frame (the field, and the safety car when it's out)
 static void prepareCarsFrame() {
   const float z = cam.zoom;
-  drawN = numDraw();
+  int ka = 0, kb = 0; float ru = 0;                  // a replay: the recorded poses instead of the live ones
+  const bool rp = rpPlaying && replayFrameAt(rpPlayT, ka, kb, ru);
+  drawN = rp ? rpFrame(ka).n : numDraw();
   for (int i = 0; i < drawN; ++i) {
     const Car& c = cars[i];
     CarDraw& d = cdraw[i];
     const ClassSpec& cs = CLS[c.cls];
-    float h = c.heading + c.slip;
-    d.sx = w2sx(c.x); d.sy = w2sy(c.y);
+    float px = c.x, py = c.y, h = c.heading + c.slip;
+    d.brk = c.braking; d.spin = c.state == CS_SPIN;
+    if (rp) { uint8_t fl; replayPose(ka, kb, ru, i, px, py, h, fl); d.brk = fl & RPF_BRAKE; d.spin = fl & RPF_SPIN; }
+    d.sx = w2sx(px); d.sy = w2sy(py);
     d.ca = fastCos(h); d.sa = fastSin(h);
     d.hl = cs.len * 0.5f * z; d.hwd = cs.wid * 0.5f * z;
     float R = d.hl + 3;
@@ -1683,7 +1689,7 @@ static void IRAM_ATTR drawHeadlights() {
   uint32_t a = (uint32_t)(2 + 6 * (nightAmt - 0.3f) / 0.7f);
   for (int i = 0; i < drawN; ++i) {
     const CarDraw& d = cdraw[i];
-    if (!d.vis || !stripHit(d.y0, d.y1) || cars[i].state == CS_SPIN) continue;
+    if (!d.vis || !stripHit(d.y0, d.y1) || d.spin) continue;
     int ax, ay, bx, by, cx, cy;
     carPt(d, 0.95f, 0, ax, ay); carPt(d, 5.2f, -2.4f, bx, by); carPt(d, 5.2f, 2.4f, cx, cy);
     blendTri(ax, ay, bx, by, cx, cy, 0xFFF0C8u, a);
@@ -1773,8 +1779,8 @@ static void IRAM_ATTR drawCarBody(int i) {
       break;
   }
   // Tail lights: brighter when braking, always on at night
-  if (lenPx >= 16.0f && (c.braking || nightAmt > 0.3f)) {
-    uint32_t tl = c.braking ? 0xFF3A20u : 0xA01810u;
+  if (lenPx >= 16.0f && (d.brk || nightAmt > 0.3f)) {
+    uint32_t tl = d.brk ? 0xFF3A20u : 0xA01810u;
     int ax, ay, bx, by;
     carPt(d, -0.97f, -0.55f, ax, ay); carPt(d, -0.97f, 0.55f, bx, by);
     fCircle(ax, ay, (int)fmx(0, cam.zoom * 0.5f), tl); fCircle(bx, by, (int)fmx(0, cam.zoom * 0.5f), tl);
