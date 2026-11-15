@@ -483,14 +483,28 @@ static void generateWorld(int sel, uint32_t seed, ProgressFn progress) {
 
 // ─── Lighting & palette ───────────────────────────────────────────────────────
 static int8_t   weatherOverride = -1;       // -1 = live weather, else WeatherCondition
+static bool     showersOn = true;           // Settings → Rain showers: a passing shower now and then (race.h)
+static volatile int8_t showerWx = -1;
+static float    showerLevel = 1.0f;         // how wet that shower makes the track (a light one: about half)       // a shower passing over this race (race.h), on top of live weather
 static float    flashAmt = 0;
 static float    snowCover = 0;
 static float    wetAmt = 0;                 // 0 dry .. 1 soaked
 static uint32_t skyCol = 0x7896B4u;
 static bool     palChanged = true;         // set when pal565 actually changes (forces a full redraw)
 
-static WeatherCondition effectiveWeather() {
+// The weather before any shower: forced in Settings, or live.
+static WeatherCondition baseWeather() {
   return weatherOverride >= 0 ? (WeatherCondition)weatherOverride : (WeatherCondition)currentWeather;
+}
+// A shower passes over a dry day (sunny or cloudy, live or forced); never over rain, snow or fog.
+static bool showerApplies() { return showerWx >= 0 && baseWeather() <= WEATHER_CLOUDY; }
+static WeatherCondition effectiveWeather() {
+  return showerApplies() ? (WeatherCondition)showerWx : baseWeather();
+}
+static bool wetWeather(int w) { return w == WEATHER_RAINY || w == WEATHER_STORMY; }
+// How wet the track ends up in this weather (it soaks in and dries out toward this).
+static float wetTarget(WeatherCondition wx) {
+  return wetWeather(wx) ? 1.0f : (wx == WEATHER_SNOWY ? 0.5f : (wx == WEATHER_FOGGY ? 0.2f : 0.0f));
 }
 
 static void updateLighting(bool snap = false) {
@@ -513,6 +527,7 @@ static void updateLighting(bool snap = false) {
     case WEATHER_FOGGY:         dim = 0.86f; sun = 0.12f; fog = 0.34f; wetT = 0.2f; break;
     default: break;
   }
+  if (showerApplies()) wetT = showerLevel;
   tr *= dim; tg *= dim; tb *= dim;
   if (wx == WEATHER_SNOWY) tb *= 1.05f;
 
@@ -530,8 +545,8 @@ static void updateLighting(bool snap = false) {
   nightAmt = 1.0f - day;
   snowCover = lerpf(snowCover, wx == WEATHER_SNOWY ? 1.0f : 0.0f, snap ? 1.0f : 0.004f);
   if (snap) wetAmt = wetT;
-  else if (wetAmt < wetT) wetAmt = fmn(wetT, wetAmt + 0.0025f);     // soaks in over ~15 s
-  else wetAmt = fmx(wetT, wetAmt - 0.0006f);                        // dries over ~1 min
+  else if (wetAmt < wetT) wetAmt = fmn(wetT, wetAmt + 0.0010f);     // soaks in over ~30 s
+  else wetAmt = fmx(wetT, wetAmt - 0.00035f);                       // dries over ~1.5 min: a couple of laps to gamble on
 
   uint32_t daySky = mixRgb(0x9AB4C8u, 0x7894B0u, sun);
   skyCol = mixRgb(mixRgb(0x101828u, daySky, day), 0xE09060u, gold * 0.7f);

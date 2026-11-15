@@ -164,6 +164,8 @@ static void fatal(const char* msg) {
 //   next [laps]            skip to the next race (laps, if given, for that race only)
 //   shot                   the screen at half size, as hex RGB565 rows between "SHOT w h" and "SHOT END"
 //   panel <page> [slot] [colours]   open a settings page (-1 closes it); 4 = a slot's colours
+//   shower [in] [laps] [wet]        rain in this race: starting in <in> laps (0), for <laps> (3), this wet (1)
+//   newseason [laps]                the next race starts a new season (careers move on); saves nothing
 static int testLaps = 0;
 
 static void serialScreenshot() {
@@ -197,6 +199,18 @@ static void handleSerialCmd(char* s) {
   if (!strcmp(tok[0], "finale")) { testLaps = clampi(a1, 0, 99); champTestFinale(carSetting); nextRaceRequested = true; }
   else if (!strcmp(tok[0], "next")) { testLaps = clampi(a1, 0, 99); nextRaceRequested = true; Serial.println("Test: next race"); }
   else if (!strcmp(tok[0], "shot")) serialScreenshot();
+  else if (!strcmp(tok[0], "shower")) {
+    const float prog = cars[order[0]].dist / trk.L;
+    showerFrom = prog + (nt > 1 ? atof(tok[1]) : 0.0f);
+    showerTo = showerFrom + (nt > 2 ? atof(tok[2]) : 3.0f);
+    showerLevel = nt > 3 ? clampf(atof(tok[3]), 0.1f, 1.0f) : 1.0f;
+    showerStorm = false;
+    Serial.printf("Test: shower from lap %.1f to %.1f, wet %.2f\n", showerFrom, showerTo, showerLevel);
+  }
+  else if (!strcmp(tok[0], "newseason")) {
+    testLaps = clampi(a1, 0, 99); champTest = true; champTestRan = false; champ.raceNo = SEASON_RACES; nextRaceRequested = true;
+    Serial.println("Test: the next race starts a new season (nothing will be saved)");
+  }
   else if (!strcmp(tok[0], "panel")) {
     if (nt < 2 || a1 < 0) { panelOpen = false; panelPage = 0; }
     else {
@@ -207,7 +221,7 @@ static void handleSerialCmd(char* s) {
     }
     Serial.printf("Test: panel %s page %d\n", panelOpen ? "open" : "closed", panelPage);
   }
-  else Serial.printf("Commands: finale [laps], next [laps], shot, panel <page> [slot] [colours] (got '%s')\n", tok[0]);
+  else Serial.printf("Commands: finale [laps], next [laps], shot, panel <page> [slot] [colours], shower [in] [laps] [wet], newseason [laps] (got '%s')\n", tok[0]);
 }
 static void pollSerialCmd() {
   static char buf[40]; static int n = 0;

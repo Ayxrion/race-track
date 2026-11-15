@@ -116,6 +116,9 @@ struct Car {
   uint8_t pitDone; int16_t pitLap; bool repaired;   // stops made, the planned lap, damage fixed
   float pitT, pitBox;       // time left at the stop; where its garage is (signed s)
   float pitStopT;           // how long its last stop took, stationary (s)
+  bool  wets, pitWets;      // on wet weather tyres; the tyres it's coming in for
+  uint8_t tyreChg;          // its last stop: 0 the same kind, 1 onto wets, 2 back onto slicks
+  float wxIn, wxOut;        // how wet before this driver comes in for wets, and how dry before slicks again
   float dPark, outT;        // where it's being pushed to, and how long ago it retired
   float dbgVT; int8_t dbgAhead;   // last target speed / car followed (debugging)
   float progT, progDist;          // progress watchdog
@@ -163,13 +166,18 @@ static bool     rosterOn = false;
 static uint32_t rosterSeed = 1;          // the season's: who is quick, and the team colours
 static uint32_t rosterProtoMask = 0;     // Endurance: which cars get prototypes (0 = the first third)
 static int      poleCar = -1;            // who qualified on pole
-static const char* rosterCode(int i) { return customDrivers && customCode[i][0] ? customCode[i] : DRIVER_CODES[i % NUM_CODES]; }
 static uint32_t codeHash(const char* s) { uint32_t h = 2166136261u; for (; *s; ++s) h = (h ^ (uint8_t)*s) * 16777619u; return h; }
 // A driver's pace and skill for the season (the same ranges the random field uses).
 static void seasonAbility(const char* code, uint32_t seed, float& perf, float& skill) {
   const uint32_t h = hash32(codeHash(code) ^ (seed * 2654435761u)), h2 = hash32(h + 0x9E3779B9u);
   perf  = 0.988f + 0.012f * (float)(h & 0xFFFF) / 65535.0f;
   skill = 0.86f + 0.13f * (float)(h2 & 0xFFFF) / 65535.0f;
+}
+#include "careers.h"
+// Car i's driver: the user's slot i, or whoever has that seat in the standard field (careers bring rookies in).
+static const char* rosterCode(int i) {
+  if (customDrivers && customCode[i][0]) return customCode[i];
+  return career_ok && career.stdCode[i][0] ? career.stdCode[i] : DRIVER_CODES[i % NUM_CODES];
 }
 
 static const uint32_t TEAM_COLS[][3] = {
@@ -480,6 +488,10 @@ static void scCaps() {
 // every car plans one stop, somewhere around half distance, and it comes in earlier for a safety car
 // or to have heavy damage repaired. A stop is a drive down the pit lane at the speed limit, a stop at
 // the car's own garage (new tyres, and repairs if it needs them), and back out onto the track.
+#define WET_SLICK   0.30f      // grip slicks lose on a soaked track (×)
+#define WET_WETS0   0.10f      // grip wets give away on a dry track...
+#define WET_WETS1   0.16f      // ...and on a soaked one
+#define WET_CROSS   0.42f      // as wet as this: wets are the quicker tyre
 #define TW_GRIP     0.06f      // grip lost (×) at wear 1 (it goes with wear²)
 #define PIT_V       45.0f      // px/s: the pit lane speed limit
 #define PIT_TAPER   28.0f      // px: the lane's entry and exit (as world.h draws it)
@@ -494,6 +506,9 @@ static inline float pitLaneD(float sS) {        // the pit lane's centre at sign
 // Plan a car's tyres at the start: how fast they wear, and on which lap it stops.
 static void planTyres(Car& c, int i) {
   c.wear = 0; c.pit = 0; c.pitDone = 0; c.pitLap = -1; c.repaired = false;
+  c.wets = wetAmt > WET_CROSS; c.tyreChg = 0;                 // the tyres for the track as it is now
+  c.wxIn = frandr(0.30f, 0.75f);                              // some gamble on staying out, some come in early
+  c.wxOut = frandr(0.18f, 0.42f);
   const float k = frandr(0.92f, 1.08f);                       // some are easier on their tyres
   if (!trk.hasPits) c.wearK = k / (fmx((float)simLaps, 10.0f) * 1.6f);
   else if (simLaps == 0) c.wearK = k / 12.0f;                 // endless: in when they're worn
@@ -507,13 +522,22 @@ static void planTyres(Car& c, int i) {
   c.pitBox = m0 + 12.0f * ((i % cells) + 0.5f);                // in front of its own garage
 }
 
+static inline bool rainingNow() { return wetWeather(effectiveWeather()); }
+// The tyres a driver wants for the conditions: wets once it's as wet as they're willing to risk on slicks,
+// and slicks again once the rain has stopped and it's dried out enough for them.
+static bool wantsWets(const Car& c) {
+  if (c.wets) return rainingNow() || wetAmt > c.wxOut;
+  return wetAmt > c.wxIn;
+}
+
 // Should this car come in at the end of this lap? (Decided before the pit entry.)
 static bool wantsPit(const Car& c, bool racing) {
   if (!trk.hasPits || !racing || c.finished || c.out || c.pit) return false;
   if (simLaps > 0 && c.lap + 1 >= simLaps) return false;      // not on the last lap
+  if (wantsWets(c) != c.wets && (simLaps == 0 || simLaps - c.lap > 2)) return true;   // the wrong tyres for the weather
   if (c.dmg >= 0.5f && !c.repaired && (simLaps == 0 || simLaps - c.lap > 2)) return true;   // repairs
   if (simLaps == 0) return c.wear > 0.8f;
-  if (c.pitLap < 0 || c.pitDone) return false;
+  if (c.pitLap < 0) return false;                            // (re-planned after every stop: see pitDrive)
   if (c.lap + 1 >= c.pitLap) return true;                     // the plan
   // a cheap stop under the safety car, if new tyres would last from here to the flag
   return scState != SC_NONE && c.pitLap - (c.lap + 1) <= 4 && (simLaps - (c.lap + 1)) * c.wearK <= 0.9f;   // (wearK: wear per lap)
@@ -536,7 +560,18 @@ static void pitDrive(Car& c, int i, float dt) {
   if (c.pit == 3) {                                            // stopped
     c.v = 0; vt = 0;
     c.pitT -= dt;
-    if (c.pitT <= 0) { c.pit = 4; c.wear = 0; if (c.repaired) c.dmg = fmn(c.dmg, 0.05f); pushEv(EV_PITDONE, i); }
+    if (c.pitT <= 0) {
+      c.pit = 4; c.wear = 0; if (c.repaired) c.dmg = fmn(c.dmg, 0.05f);
+      c.tyreChg = c.pitWets == c.wets ? 0 : (c.pitWets ? 1 : 2);
+      c.wets = c.pitWets;
+      // Re-plan what's left: one more stop around the middle of the rest of the race, if these tyres
+      // won't last to the flag (a stop for the weather or repairs can come early); otherwise none.
+      if (simLaps > 0 && c.pitLap >= 0) {
+        const int left = simLaps - (c.lap + 1);
+        c.pitLap = (left > 4 && left * c.wearK > 1.05f) ? (int16_t)clampi(c.lap + 1 + (int)lroundf(left * frandr(0.4f, 0.6f)), c.lap + 2, simLaps - 2) : -1;
+      }
+      pushEv(EV_PITDONE, i);
+    }
   }
   if (c.pit == 4 && sS >= trk.pitS1) {                         // the end of the lane: racing again
     c.pit = 0; c.ghost = false; ++c.pitDone;
@@ -619,7 +654,7 @@ static void setupCars(int n, uint8_t series, uint32_t seed) {
     planTyres(c, i);
     quali[i] = frandr(-0.015f, 0.015f);   // without a championship: a random grid
     if (rosterOn) {
-      float p, sk; seasonAbility(c.code, rosterSeed, p, sk);
+      float p, sk; careerAbility(c.code, rosterSeed, p, sk);   // their career so far (champ.h), or the season's draw
       c.perf = clampf(p + frandr(-0.002f, 0.002f), 0.985f, 1.002f);   // their pace for the season, give or take the day
       c.skill = sk;
       // Qualifying: one flying lap each. The quickest usually take pole; a mistake costs a few places.
@@ -740,7 +775,13 @@ static void setupCars(int n, uint8_t series, uint32_t seed) {
 #define CONCEDE        0.96f    // a car giving the corner lifts this much (×)
 
 // ─── Physics helpers ──────────────────────────────────────────────────────────
-static inline float gripFactor() { return 1.0f - 0.14f * wetAmt - 0.14f * snowCover; }
+// Wet weather: slicks lose a lot of grip as the track gets wet; wets give a little away everywhere (and
+// overheat and wear fast on a dry track). They're as quick as each other at about 40% wet.
+static inline float tyreGrip(const Car& c) {
+  const float t = c.wets ? 1.0f - WET_WETS0 - (WET_WETS1 - WET_WETS0) * wetAmt : 1.0f - WET_SLICK * wetAmt;
+  return t * (1.0f - 0.14f * snowCover);
+}
+static inline float wetSlip(const Car& c) { return c.wets ? 1.0f * wetAmt : 2.0f * wetAmt; }   // what the wet adds to mistakes and spins
 
 // Surface under a car: 0 track/kerb/tarmac run-off, 1 gravel, 2 grass.
 static int8_t surfaceAt(float s, float d) {
@@ -786,7 +827,7 @@ static void cornerEntry(Car& c) {
   float g = (frand() + frand() + frand() - 1.5f) * 2.0f;            // ~N(0,1)
   c.commit = 1.0f + g * T.sigma * (1.6f - c.skill);
   c.exitPush = GREED * frand() * 2.0f * (1.4f - c.skill);
-  float p = (1.0f - c.skill) * 0.09f * T.mistake * (1.0f + 2.5f * wetAmt + 3.0f * snowCover) * (c.pressT > 0 ? PRESSURE_MIST : 1.0f);
+  float p = (1.0f - c.skill) * 0.09f * T.mistake * (1.0f + 2.5f * wetSlip(c) + 3.0f * snowCover) * (c.pressT > 0 ? PRESSURE_MIST : 1.0f);
   if (frand() < p) { c.commit += frandr(0.08f, 0.24f); c.lockT = 0.35f; }  // a lapse: brakes far too late
 }
 
@@ -803,7 +844,6 @@ static void startSpin(Car& c, int ci, float dir) {
 // ─── Simulation step ──────────────────────────────────────────────────────────
 static void updateCars(float dt, bool racing, bool coolDown) {
   const float hw = trk.hw;
-  const float wx = gripFactor();
   simInvDs = 1.0f / trk.ds;
   ++simTick;
   const float formK = FORM_SD * sqrtf(2.0f * dt / FORM_TAU);   // the same for every car
@@ -818,6 +858,7 @@ static void updateCars(float dt, bool racing, bool coolDown) {
   updateSafetyCar(dt);
   for (int i = 0; i < numCars; ++i) {
     Car& c = cars[i];
+    const float wx = tyreGrip(c);                     // the weather, through this car's tyres
     const ClassSpec& cs = CLS[c.cls];
     const DriverSpec& T = DRV;
     if (c.out) {                                       // retired: pushed off the road, smoking for a while
@@ -840,9 +881,9 @@ static void updateCars(float dt, bool racing, bool coolDown) {
     if (c.pit >= 2) { pitDrive(c, i, dt); continue; }
     if (wantsPit(c, racing)) {                           // decided a little before the entry
       const float toEntry = trk.pitS0 - sSigned(c.s);
-      if (toEntry > 200.0f && toEntry < 330.0f) { c.pit = 1; c.passT = 0; }
+      if (toEntry > 200.0f && toEntry < 330.0f) { c.pit = 1; c.passT = 0; c.pitWets = wantsWets(c); }
     }
-    if (racing) c.wear = fmn(c.wear + c.wearK * c.v * dt / trk.L, 1.3f);
+    if (racing) c.wear = fmn(c.wear + c.wearK * c.v * dt / trk.L * (c.wets ? 1.0f + 3.0f * (1.0f - wetAmt) : 1.0f), 1.3f);   // wets cook on a dry track
     if (c.dmg >= DMG_SHOW && c.v > 20.0f && frand() < (c.dmg - 0.25f) * 0.18f) {   // a damaged car trails smoke
       const float back = -cs.len * 0.5f;
       spawnParticle(PT_SMOKE, c.x + fastCos(c.heading) * back, c.y + fastSin(c.heading) * back, frandr(-0.2f, 0.2f), frandr(-0.2f, 0.2f), 1.6f, 0.06f, 24);
@@ -1340,7 +1381,7 @@ static void updateCars(float dt, bool racing, bool coolDown) {
         slipT = sgn * fmn(0.45f, over * 0.8f);
         if (over > 0.15f && frand() < 0.5f) spawnParticle(PT_SMOKE, c.x, c.y, frandr(-0.2f, 0.2f), frandr(-0.2f, 0.2f), 1.8f, 0.09f, 18);
         if (demandSpin > 1.1f && c.v > 40.0f &&
-            frand() < 0.01f * (demandSpin - 1.1f) / 0.1f * T.spin * (1.0f + 1.5f * wetAmt) * (c.surface ? 2.0f : 1.0f))
+            frand() < 0.01f * (demandSpin - 1.1f) / 0.1f * T.spin * (1.0f + 1.5f * wetSlip(c)) * (c.surface ? 2.0f : 1.0f))
         {
 #ifdef RT_DEBUG_SPIN
           printf("  spin-slide %s s=%.0f d=%.1f v=%.0f demand=%.2f surf=%d k=%.4f rk=%.4f\n", c.code, c.s, c.d, c.v, demand, c.surface, f.k, f.rk);
@@ -1358,7 +1399,7 @@ static void updateCars(float dt, bool racing, bool coolDown) {
           c.v = fmx(0.0f, c.v - overThrottle * 40.0f * dt);
           kc += sgn * fmn(kMax * 0.15f, overThrottle * kMax * 0.3f);       // tightens the line (oversteer)
           if (overThrottle > 0.08f) c.overT = 0.6f;          // a proper slide (small ones just rotate the car a little)
-          if (overThrottle > 0.15f && frand() < 0.002f * (overThrottle - 0.15f) / 0.05f * T.spin * (1.0f + wetAmt * 2.0f))
+          if (overThrottle > 0.15f && frand() < 0.002f * (overThrottle - 0.15f) / 0.05f * T.spin * (1.0f + wetSlip(c) * 2.0f))
             startSpin(c, i, sgn);
           if (frand() < 0.3f) spawnParticle(PT_SMOKE, c.x, c.y, frandr(-0.2f, 0.2f), frandr(-0.2f, 0.2f), 1.6f, 0.08f, 16);
         }

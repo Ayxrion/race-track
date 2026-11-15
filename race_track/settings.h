@@ -55,6 +55,7 @@ static void loadSettings() {
   camMode         = prefs.getUChar("cam", 0);
   spectator       = prefs.getBool("spect", false);
   customDrivers   = prefs.getBool("cdrv", false);
+  showersOn       = prefs.getBool("shwr", true);
   {
     DriverBlob b;
     if (prefs.getBytesLength("drv") == sizeof(b) && prefs.getBytes("drv", &b, sizeof(b)) == sizeof(b)) {
@@ -84,6 +85,7 @@ static void saveSettings() {
   prefs.putUChar("cam", camMode);
   prefs.putBool("spect", spectator);
   prefs.putBool("cdrv", customDrivers);
+  prefs.putBool("shwr", showersOn);
   {
     DriverBlob b;
     memcpy(b.code, customCode, sizeof(b.code)); memset(b.unused, 0, sizeof(b.unused));

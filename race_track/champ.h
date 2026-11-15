@@ -67,6 +67,7 @@ static void champSave() {
   prefs.begin(SETTINGS_NS, false);
   prefs.putBytes("champ", &champ, sizeof(champ));
   prefs.putBytes("recs", &recs, sizeof(recs));
+  prefs.putBytes("career", &career, sizeof(career));
   prefs.end();
 }
 
@@ -75,8 +76,13 @@ static void champNewSeason() {
   char last[4]; memcpy(last, champ.lastChamp, 4);
   memset(&champ, 0, sizeof(champ));
   champ.ver = CHAMP_VER; champ.season = season;
-  champ.seed = esp_random() | 1u;                    // new pace for everyone, new colours
+  champ.seed = esp_random() | 1u;                    // new team colours (pace comes from the drivers' careers)
   memcpy(champ.lastChamp, last, 4);
+  careerNews[0] = 0;
+  if (season > 1) {                                  // a year on for every driver: older, better or worse, and some retire
+    const int gone = careerNewSeason();
+    Serial.printf("RL CAREER season %u retired %d %s\n", season, gone, careerNews);
+  }
   Serial.printf("Championship: season %u starts\n", season);
 }
 
@@ -84,12 +90,15 @@ static void champLoad() {
   prefs.begin(SETTINGS_NS, true);
   const bool okC = prefs.getBytesLength("champ") == sizeof(champ) && prefs.getBytes("champ", &champ, sizeof(champ)) == sizeof(champ) && champ.ver == CHAMP_VER;
   const bool okR = prefs.getBytesLength("recs") == sizeof(recs) && prefs.getBytes("recs", &recs, sizeof(recs)) == sizeof(recs) && recs.ver == CHAMP_VER;
+  const bool okK = prefs.getBytesLength("career") == sizeof(career) && prefs.getBytes("career", &career, sizeof(career)) == sizeof(career) && career.ver == CAREER_VER;
   prefs.end();
+  if (okK && career.n <= CAREER_MAX) career_ok = true;
+  else careerReset();                                 // careers start now, from this season's abilities
   if (!okC) memset(&champ, 0, sizeof(champ));
   if (!okR) { memset(&recs, 0, sizeof(recs)); recs.ver = CHAMP_VER; }
   if (champ.n > CH_MAX) champ.n = 0;
   if (recs.n > REC_MAX) recs.n = 0;
-  Serial.printf("Championship: season %u, %u of %d races run, %u drivers with records\n", champ.season, champ.raceNo, SEASON_RACES, recs.n);
+  Serial.printf("Championship: season %u, %u of %d races run, %u drivers with records, %u careers\n", champ.season, champ.raceNo, SEASON_RACES, recs.n, career.n);
 }
 
 // Wipe the season (Settings → Drivers → New season); the career records stay.
@@ -158,7 +167,8 @@ static void champGridTicker() {
     const ChampRow &a = champ.row[idx[0]], &b = champ.row[idx[1]];
     if (a.pts == b.pts) snprintf(gridMsg[1], sizeof(gridMsg[1]), "Race %d of %d: %s and %s level on points", champ.raceNo + 1, SEASON_RACES, a.code, b.code);
     else snprintf(gridMsg[1], sizeof(gridMsg[1]), "%s %d of %d: %s leads by %d", champFinal ? "Final race," : "Race", champ.raceNo + 1, SEASON_RACES, a.code, a.pts - b.pts);
-  } else snprintf(gridMsg[1], sizeof(gridMsg[1]), "Season %u, race 1 of %d", champ.season, SEASON_RACES);
+  } else if (careerNews[0]) snprintf(gridMsg[1], sizeof(gridMsg[1]), "%s", careerNews);    // who retired, who came in
+  else snprintf(gridMsg[1], sizeof(gridMsg[1]), "Season %u, race 1 of %d", champ.season, SEASON_RACES);
 }
 
 // The race is over (results phase, sim idle): score it, update the records and save.
@@ -261,7 +271,7 @@ static void champTestFinale(int nCars) {
   champTest = true; champTestRan = false;
   const int n = clampi(nCars, 2, MAX_CARS);
   int idx[MAX_CARS]; float perf[MAX_CARS];
-  for (int i = 0; i < n; ++i) { float sk; seasonAbility(rosterCode(i), champ.seed, perf[i], sk); idx[i] = i; }
+  for (int i = 0; i < n; ++i) { float sk; careerAbility(rosterCode(i), champ.seed, perf[i], sk); idx[i] = i; }
   std::sort(idx, idx + n, [&](int a, int b) { return perf[a] > perf[b]; });
   static const uint16_t PTS[MAX_CARS] = { 168, 161, 140, 118, 101, 88, 70, 52, 41, 30, 22, 15, 10, 6, 4, 2, 1, 0, 0, 0 };
   static const uint8_t WINS[6] = { 3, 3, 2, 1, 0, 0 }, PODS[6] = { 6, 6, 5, 4, 2, 1 };

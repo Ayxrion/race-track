@@ -31,7 +31,7 @@ enum UiId : int8_t {
   UI_NONE = -1, UI_ZOOM_OUT = 0, UI_ZOOM_IN, UI_HUD, UI_SETTINGS, UI_SPECTATE,
   UI_P_SLIDER, UI_P_WX_PREV, UI_P_WX_NEXT, UI_P_TIME_PREV, UI_P_TIME_NEXT, UI_P_CARS_MINUS, UI_P_CARS_PLUS,
   UI_P_TRACK_PREV, UI_P_TRACK_NEXT, UI_P_LAPS_PREV, UI_P_LAPS_NEXT, UI_P_SER_PREV, UI_P_SER_NEXT,
-  UI_P_CAM_PREV, UI_P_CAM_NEXT, UI_P_SPEC_PREV, UI_P_SPEC_NEXT,
+  UI_P_CAM_PREV, UI_P_CAM_NEXT, UI_P_SPEC_PREV, UI_P_SPEC_NEXT, UI_P_SHWR_PREV, UI_P_SHWR_NEXT,
   UI_P_NEXT_RACE, UI_P_CLOSE, UI_P_DRIVERS, UI_P_RECORDS, UI_COUNT
 };
 
@@ -43,8 +43,8 @@ static const Rect BTN[NUM_TOP_BTN] = { { 572, 8, 50, 46 }, { 630, 8, 50, 46 }, {
 #define PANEL_Y 7
 #define PANEL_W 500
 #define PANEL_H 466
-#define PANEL_ROWS 8                         // arrow rows (row 0 is the brightness slider)
-#define ROW_Y(i) (PANEL_Y + 50 + (i) * 39)
+#define PANEL_ROWS 9                         // arrow rows (row 0 is the brightness slider)
+#define ROW_Y(i) (PANEL_Y + 50 + (i) * 36)
 #define CTRL_X   (PANEL_X + 190)
 #define CTRL_R   (PANEL_X + PANEL_W - 64)
 static const Rect P_SLIDER  = { CTRL_X, ROW_Y(0) - 4, 270, 38 };
@@ -57,7 +57,7 @@ static const Rect P_CLOSE     = { PANEL_X + PANEL_W - 96, PANEL_Y + PANEL_H - 52
 
 // Rows top to bottom: which control pair each row is (prev/next ids are adjacent).
 static const int8_t ROW_ID[PANEL_ROWS + 1] = { UI_NONE, UI_P_WX_PREV, UI_P_TIME_PREV, UI_P_CARS_MINUS, UI_P_TRACK_PREV,
-                                               UI_P_SER_PREV, UI_P_LAPS_PREV, UI_P_CAM_PREV, UI_P_SPEC_PREV };
+                                               UI_P_SER_PREV, UI_P_LAPS_PREV, UI_P_CAM_PREV, UI_P_SPEC_PREV, UI_P_SHWR_PREV };
 
 // ─── Drivers page and its name keyboard ──────────────────────────────────────
 // panelPage 0 = settings, 1 = drivers, 2 = editing a driver's name, 3 = career records,
@@ -278,6 +278,10 @@ static void panelAction(int id) {
       break;
     case UI_P_SPEC_PREV: case UI_P_SPEC_NEXT:
       setSpectator(!spectator);
+      break;
+    case UI_P_SHWR_PREV: case UI_P_SHWR_NEXT:
+      showersOn = !showersOn;
+      toast(showersOn ? "Rain showers: from the next race" : "No more showers from the next race", 2200);
       break;
     case UI_P_NEXT_RACE:
       if (millis() < nextRaceArmUntil) {
@@ -739,6 +743,7 @@ static void rebuildLeaderboard() {
     snprintf(b, sizeof(b), "%d", k + 1);
     lbText(b, 18, yy, LBC_LIGHT, &fonts::DejaVu9, textdatum_t::middle_right);
     lbText(c.code, 29, yy, c.out ? LBC_OUT : (c.state == CS_SPIN || c.state == CS_STOPPED) ? LBC_ORANGE : LBC_WHITE, &fonts::DejaVu9, textdatum_t::middle_left);
+    if (!c.out && c.wets) lbSpr.fillRect(50, yy - 4, 3, 8, lb4 ? (uint32_t)LBC_PROTO : LB_PAL[LBC_PROTO]);      // on wets
     if (!c.out && c.dmg >= DMG_SHOW) lbSpr.fillRect(54, yy - 4, 3, 8, lb4 ? (uint32_t)LBC_DMG : LB_PAL[LBC_DMG]);   // damaged
     if (raceSeries == SER_ENDURANCE) lbText(c.cls == CC_PROTO ? "P" : "GT", 61, yy, c.cls == CC_PROTO ? LBC_PROTO : LBC_GT, &fonts::DejaVu9, textdatum_t::middle_left);
     if (phase == RP_GRID) b[0] = 0;
@@ -835,7 +840,9 @@ static void prepareLowerThird(int camC) {
   l3.b[0] = 0; l3.cb = 0;
   if (kind == L3_PIT) {
     snprintf(l3.head, sizeof(l3.head), "PIT STOP  -  P%d", A.pos);
-    snprintf(l3.mid, sizeof(l3.mid), pitCapRep ? "%.1f s  tyres + repairs" : "%.1f s  new tyres", pitCapSecs);
+    const char* tyre = pitCapTyre == 1 ? "wets" : (pitCapTyre == 2 ? "slicks" : "new tyres");
+    if (pitCapRep) snprintf(l3.mid, sizeof(l3.mid), "%.1f s  %s + repairs", pitCapSecs, pitCapTyre ? tyre : "tyres");
+    else snprintf(l3.mid, sizeof(l3.mid), "%.1f s  %s", pitCapSecs, tyre);
   } else if (kind == L3_BATTLE) {
     const Car& B = cars[kb];
     snprintf(l3.head, sizeof(l3.head), A.pos == 1 ? "BATTLE FOR THE LEAD" : "BATTLE FOR P%d", A.pos);
@@ -843,8 +850,9 @@ static void prepareLowerThird(int camC) {
     snprintf(l3.mid, sizeof(l3.mid), "%.1f s", gapSecs(A, B));
   } else {
     const int lapNow = raceLaps > 0 ? clampi(A.lap + 1, 1, raceLaps) : clampi(A.lap + 1, 1, 9999);
-    if (raceLaps > 0) snprintf(l3.head, sizeof(l3.head), "P%d  -  LAP %d / %d", A.pos, lapNow, raceLaps);
-    else              snprintf(l3.head, sizeof(l3.head), "P%d  -  LAP %d", A.pos, lapNow);
+    const char* onWets = A.wets ? "  -  WETS" : "";
+    if (raceLaps > 0) snprintf(l3.head, sizeof(l3.head), "P%d  -  LAP %d / %d%s", A.pos, lapNow, raceLaps, onWets);
+    else              snprintf(l3.head, sizeof(l3.head), "P%d  -  LAP %d%s", A.pos, lapNow, onWets);
     if (A.pit >= 2) snprintf(l3.mid, sizeof(l3.mid), "in the pits");
     else if (A.pos == 1) {
       if (numCars > 1) snprintf(l3.mid, sizeof(l3.mid), "leads by %.1f s", gapSecs(A, cars[order[1]]));
@@ -1277,6 +1285,9 @@ static void drawRecordsPage() {
   static const int16_t COLX[] = { 150, 198, 252, 302, 358, 410, 462 };
   const int hy = PANEL_Y + 62;
   for (int c = 0; c < 7; ++c) drawText(HEAD[c], PANEL_X + COLX[c], hy, 0x8A98A0u, &fonts::DejaVu9, textdatum_t::middle_center);
+  bool anyAge = false;                                  // ages: the standard field's (the user's own drivers have none)
+  for (int i = 0; i < numCars && !anyAge; ++i) anyAge = !isCustomCode(cars[i].code) && careerFind(cars[i].code, false, 0);
+  if (anyAge) drawText("Age", PANEL_X + 104, hy, 0x8A98A0u, &fonts::DejaVu9, textdatum_t::middle_center);
   const RecRow* rows[MAX_CARS]; int n = 0;
   for (int i = 0; i < numCars; ++i) { const RecRow* r = recFind(cars[i].code, false); if (r) rows[n++] = r; }
   std::sort(rows, rows + n, [](const RecRow* a, const RecRow* b) {
@@ -1292,6 +1303,10 @@ static void drawRecordsPage() {
     if (k & 1) blendRect(PANEL_X + 16, yy - 8, PANEL_W - 32, 16, 0xFFFFFFu, 3);
     snprintf(b, sizeof(b), "%.3s", r.code);
     drawText(b, PANEL_X + 40, yy, 0xFFFFFFu, &fonts::DejaVu12, textdatum_t::middle_left);
+    if (const CareerRow* cr = isCustomCode(r.code) ? nullptr : careerFind(r.code, false, 0)) {   // age (the user's own drivers have none), rookies marked
+      if ((cr->flags & CR_ROOKIE) && cr->seasons == 0) snprintf(b, sizeof(b), "%u R", cr->age); else snprintf(b, sizeof(b), "%u", cr->age);
+      drawText(b, PANEL_X + 104, yy, (cr->flags & CR_ROOKIE) && cr->seasons == 0 ? 0x80D0FFu : 0xC0CAD0u, &fonts::DejaVu9, textdatum_t::middle_center);
+    }
     const unsigned v[7] = { r.starts, r.wins, r.pods, r.poles, r.fastLaps, r.titles, r.bestStreak };
     for (int c = 0; c < 7; ++c) {
       snprintf(b, sizeof(b), "%u", v[c]);
@@ -1343,7 +1358,8 @@ static void drawPanel() {
   canvas.fillRoundRect(sx0, sy - 3, knob - sx0, 6, 3, 0xE04A3Au);
   fCircle(knob, sy, 11, 0xF4F8F8u);
 
-  if (weatherOverride < 0) snprintf(buf, sizeof(buf), "Auto: %s", weatherLiveOk ? WEATHER_NAMES[currentWeather] : "--");
+  if (showerApplies()) snprintf(buf, sizeof(buf), "%s + shower", weatherOverride < 0 ? "Auto" : WEATHER_NAMES[weatherOverride]);
+  else if (weatherOverride < 0) snprintf(buf, sizeof(buf), "Auto: %s", weatherLiveOk ? WEATHER_NAMES[currentWeather] : "--");
   else snprintf(buf, sizeof(buf), "%s", WEATHER_NAMES[weatherOverride]);
   drawPanelRow(1, "Weather", buf);
   if (currentTimeMode == TIME_REAL && !timeSynced()) snprintf(buf, sizeof(buf), "Real (no clock yet)");
@@ -1357,6 +1373,7 @@ static void drawPanel() {
   drawPanelRow(6, "Race length", buf);
   drawPanelRow(7, "Camera", CAM_MODE_NAMES[camMode]);
   drawPanelRow(8, "Spectator", spectator ? "On - camera locked" : "Off - auto after 30 s");
+  drawPanelRow(9, "Rain showers", showersOn ? "On - about 1 race in 6" : "Off");
 
   bool armed = millis() < nextRaceArmUntil;
   blendRoundRect(P_NEXT_RACE.x, P_NEXT_RACE.y, P_NEXT_RACE.w, P_NEXT_RACE.h, 10, armed ? 0xB02A20u : 0x3A4450u, 26);

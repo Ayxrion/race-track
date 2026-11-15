@@ -28,6 +28,15 @@ static char  gridMsg[2][56] = { "", "" };     // ticker lines while the cars sit
 static int   pitCapCar = -1;
 static float pitCapT = -100, pitCapSecs = 0;
 static bool  pitCapRep = false;
+static uint8_t pitCapTyre = 0;                // 1 onto wets, 2 back onto slicks
+
+// A passing shower (Settings → Rain showers): on a dry day with the weather on Auto, about 1 race in 6
+// has one, from somewhere in the first half for a third of the race or so.
+#ifndef SHOWER_P
+#define SHOWER_P (1.0f / 6.0f)
+#endif
+static float showerFrom = -1, showerTo = -1;  // in the leader's laps
+static bool  showerStorm = false;
 
 // ─── Event ticker ─────────────────────────────────────────────────────────────
 static char     evMsg[56] = "";
@@ -95,6 +104,8 @@ static void fmtLapTime(char* out, size_t n, float t) {
 // ─── Race control ─────────────────────────────────────────────────────────────
 static void startRace(int nCars, uint8_t series, uint32_t seed) {
   pitCapCar = -1; pitCapT = -100;
+  showerWx = -1; showerFrom = showerTo = -1;
+  wetAmt = wetTarget(effectiveWeather());     // the track as it is at the start (tyres are picked for it)
   allowRetire = raceLaps > 0;                 // endless races: damage slows a car, but nobody is put out
   simLaps = raceLaps;                         // for planning pit stops
   setupCars(nCars, series, seed);
@@ -107,6 +118,28 @@ static void startRace(int nCars, uint8_t series, uint32_t seed) {
   prevTop[0] = prevTop[1] = prevTop[2] = -1;
   evMsg[0] = 0;
   scState = SC_NONE; scShow = false; scT = 0; scLeadLap = -1;
+  if (showersOn && raceLaps >= 3 && baseWeather() <= WEATHER_CLOUDY && frand() < SHOWER_P) {
+    showerFrom = raceLaps * frandr(0.15f, 0.55f);
+    showerTo = showerFrom + fmx(1.2f, raceLaps * frandr(0.12f, 0.40f));
+    showerStorm = frand() < 0.2f;
+    showerLevel = showerStorm ? 1.0f : frandr(0.35f, 1.0f);   // a light one leaves the slicks a chance
+  }
+}
+
+// The shower, if this race has one: it rains while the leader is between showerFrom and showerTo laps.
+static void updateShower() {
+  if (showerFrom < 0 || phase == RP_GRID) return;
+  const float prog = cars[order[0]].dist / trk.L;
+  const bool want = prog >= showerFrom && prog < showerTo && phase != RP_RESULTS;
+  if (want && showerWx < 0) {
+    showerWx = showerStorm ? WEATHER_STORMY : WEATHER_RAINY;
+    if (showerApplies()) { lastEventT = -100; raceEvent(showerStorm ? "STORM! Heavy rain is falling" : "RAIN! A shower is passing over", 0, 4000); }
+    Serial.printf("RL WX %.1f rain\n", raceTime);
+  } else if (!want && showerWx >= 0) {
+    showerWx = -1;
+    if (baseWeather() <= WEATHER_CLOUDY && phase == RP_RACE) { lastEventT = -100; raceEvent("The rain has stopped - the track is drying", 0, 4000); }
+    Serial.printf("RL WX %.1f dry\n", raceTime);
+  }
 }
 
 // The safety car: out after a retirement (unless the race is nearly over), in once the wreck is off the
@@ -149,6 +182,7 @@ static void updateRace(float dt) {
     return;
   }
   raceTime += dt;
+  updateShower();
   updateCars(dt, true, phase == RP_RESULTS);
 
   // Chequered flag when the leader completes the last lap
@@ -187,7 +221,13 @@ static void updateRace(float dt) {
       case EV_GRAVEL:  if (A.pos <= 6) { snprintf(b, sizeof(b), "%s runs into the gravel", A.code); raceEvent(b, 6.0f); } break;
       case EV_PIT:     if (phase == RP_RACE) { Serial.printf("RL PIT %.1f %s lap %d P%d wear %.2f dmg %.2f\n", raceTime, A.code, A.lap, A.pos, A.wear, A.dmg);
                          if (A.pos <= 6) { snprintf(b, sizeof(b), "%s pits from P%d", A.code, A.pos); raceEvent(b, 2.0f); } } break;
-      case EV_PITDONE: if (phase == RP_RACE) { pitCapCar = ev.a; pitCapT = simTime; pitCapSecs = A.pitStopT; pitCapRep = A.pitStopT > 3.1f; } break;
+      case EV_PITDONE: if (phase == RP_RACE) {
+                         pitCapCar = ev.a; pitCapT = simTime; pitCapSecs = A.pitStopT; pitCapRep = A.pitStopT > 3.1f; pitCapTyre = A.tyreChg;
+                         if (A.tyreChg) {
+                           Serial.printf("RL TYRE %.1f %s lap %d P%d %s wet %.2f\n", raceTime, A.code, A.lap, A.pos, A.wets ? "wets" : "slicks", wetAmt);
+                           if (A.pos <= 8) { snprintf(b, sizeof(b), A.wets ? "%s switches to wets" : (wetAmt > 0.3f ? "%s gambles on slicks!" : "%s is back on slicks"), A.code); raceEvent(b, 2.0f); }
+                         }
+                       } break;
       case EV_DAMAGE:  snprintf(b, sizeof(b), "%s is damaged and losing time", A.code); raceEvent(b, 2.0f); break;
       case EV_OUT:
         spinCamCar = ev.a; lastEventT = -100;
