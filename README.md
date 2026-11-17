@@ -159,6 +159,17 @@ Test commands over the same serial port (one per line):
 | `shower [in] [laps] [wet]` | Rain in this race: starting in *in* laps (0), for *laps* (3), this wet (0.1-1, default 1). |
 | `replay` | Replay the leader's last few seconds now (with a moving TV camera on). |
 | `newseason [laps]` | The next race starts a new season, so careers move on. Nothing is saved: the real standings, records and careers are loaded back after it. |
+| `telemetry [off]` | Say whether the 3D viewer feed is publishing; `off` clears its saved relay settings (it stops after a reboot). |
+
+## 3D spectator feed (optional)
+
+The board can stream the race live to a separate 3D web viewer through a small relay server: the circuit once per race, then every car's position, lap and state about 7 times a second over HTTPS.
+It's off unless you set it up, and it costs about 2 fps and 23 KB of internal RAM while it runs.
+
+1. Copy `race_track/telemetry_config.h.template` to `race_track/telemetry_config.h` (gitignored) and fill in the relay's publish URL and token.
+2. Flash once over USB. On boot the board saves the URL and token in its settings memory, so OTA updates keep the feed running. Release binaries are public, so they never contain the token.
+
+The relay's certificate must chain to one of the roots in [`telemetry_ca.h`](race_track/telemetry_ca.h): ISRG Root X1/X2 (Let's Encrypt) or GTS Root R4 (Google Trust Services).
 
 ## OTA releases
 
@@ -187,6 +198,7 @@ race_track/
   ui.h               touch, buttons, settings panel, leaderboard, TV camera
   ota_update.h       GitHub-release OTA
   weather.h          OpenWeatherMap on a background task
+  telemetry.h        optional live feed for the 3D spectator viewer (telemetry_ca.h: its root certificates)
   daynight.h         NTP time and day progress
 lovyangfx-fix/       patched LovyanGFX esp32s3 files
 ```

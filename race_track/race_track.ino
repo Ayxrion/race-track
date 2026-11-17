@@ -19,6 +19,7 @@
 #include "wifi_config.h"
 #include "ota_update.h"
 #include "ui.h"
+#include "telemetry.h"
 
 #include <esp_async_memcpy.h>
 #include <esp_cache.h>
@@ -200,6 +201,10 @@ static void handleSerialCmd(char* s) {
   if (!strcmp(tok[0], "finale")) { testLaps = clampi(a1, 0, 99); champTestFinale(carSetting); nextRaceRequested = true; }
   else if (!strcmp(tok[0], "next")) { testLaps = clampi(a1, 0, 99); nextRaceRequested = true; Serial.println("Test: next race"); }
   else if (!strcmp(tok[0], "shot")) serialScreenshot();
+  else if (!strcmp(tok[0], "telemetry")) {
+    if (nt > 1 && !strcmp(tok[1], "off")) telemetryForget();
+    else Serial.printf("Telemetry: %s\n", telemetryReady ? "publishing" : "off");
+  }
   else if (!strcmp(tok[0], "shower")) {
     const float prog = cars[order[0]].dist / trk.L;
     showerFrom = prog + (nt > 1 ? atof(tok[1]) : 0.0f);
@@ -264,6 +269,7 @@ static void beginNextRace() {
   if (spectator || millis() - lastTouchMs > AUTOCAM_IDLE_MS) autoCam = true;
   updateLighting(true);
   rowHashValid = false;
+  telemetryNewRace();
 }
 
 void setup() {
@@ -308,6 +314,7 @@ void setup() {
   if (!allocWorld()) fatal("World allocation failed (PSRAM?)");
   initBgPrefetch();
 
+  telemetryInit();
   initWeather();
   initDayNight();
   lastTouchMs = millis() - AUTOCAM_IDLE_MS - 1;      // start with the TV camera
@@ -401,6 +408,7 @@ void loop() {
   }
   if ((int32_t)(now - simMs) >= FRAME_MS) simMs = now;
   updateLighting();
+  telemetryCapture();                          // coherent live state; network task owns its copy
 
   // ── Snapshot what the renderer needs, then let the sim run ahead on core 0 ──
   int camCar = cameraCar();

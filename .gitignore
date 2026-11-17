@@ -11,3 +11,4 @@ race_track/build/
 
 # Device flash backups (contain WiFi credentials / NVS data)
 backups/
+race_track/telemetry_config.h
