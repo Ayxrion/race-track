@@ -300,6 +300,7 @@ void setup() {
     WiFi.scanDelete();
   }
   otaInit(&display);
+  telemetryLoadConfig();        // save a USB build's relay settings before OTA can replace it
   if (found) checkForOTAUpdate();
   else { _otaStatus("WiFi network not found - skipping update check"); delay(1200); }
 
