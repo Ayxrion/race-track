@@ -16,6 +16,8 @@ jobs:
           node-version: '22'
       - name: Verify racing invariants and OTA integration
         run: |
+          git clone --depth 1 --branch v6.21.6 https://github.com/bblanchon/ArduinoJson.git build/ArduinoJson
+          node tests/run-ota-stream.mjs
           node --test tests/ota.test.mjs
           node tests/run-simulation.mjs 18 recovery
 
@@ -96,8 +98,12 @@ jobs:
         run: |
           NOTES="docs/releases/${GITHUB_REF_NAME}.md"
           if [ -f "$NOTES" ]; then
+            # Keep the API response small for devices still running the older
+            # stream reader. Detailed notes remain in the tagged source tree.
+            printf 'Firmware %s. GitHub OTA remains enabled. Full release notes: https://github.com/%s/blob/%s/%s\n' \
+              "$GITHUB_REF_NAME" "$GITHUB_REPOSITORY" "$GITHUB_REF_NAME" "$NOTES" > build/release-summary.md
             gh release create "$GITHUB_REF_NAME" firmware.bin \
-              --title "Race Track Firmware $GITHUB_REF_NAME" --notes-file "$NOTES"
+              --title "Race Track Firmware $GITHUB_REF_NAME" --notes-file build/release-summary.md
           else
             gh release create "$GITHUB_REF_NAME" firmware.bin \
               --title "Race Track Firmware $GITHUB_REF_NAME" \

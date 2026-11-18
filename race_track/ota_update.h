@@ -10,6 +10,7 @@
 #include <ArduinoJson.h>
 
 #include "version.h"
+#include "ota_stream.h"
 
 // Set by otaInit() — keeps this header free of direct display references
 static lgfx::LGFX_Device* _otaDisp = nullptr;
@@ -76,10 +77,10 @@ static void checkForOTAUpdate() {
     // ── Query GitHub releases/latest ─────────────────────────────────────────
     _otaStatus("OTA: Checking for updates...");
 
-    {
+    for (int attempt = 0; attempt < 3; ++attempt) {
         WiFiClientSecure apiClient;
         apiClient.setInsecure();
-        apiClient.setTimeout(15);
+        apiClient.setTimeout(15000); // Arduino-ESP32 Stream timeout is milliseconds
 
         HTTPClient http;
         if (!http.begin(apiClient,
@@ -91,10 +92,11 @@ static void checkForOTAUpdate() {
 
         http.addHeader("User-Agent", "ESP32-RaceTrack/" FIRMWARE_VERSION);
         http.addHeader("Accept",     "application/vnd.github.v3+json");
-        http.setTimeout(10000);
+        http.addHeader("Accept-Encoding", "identity");
+        http.setTimeout(15000);
         http.useHTTP10(true);   // no chunked transfer encoding: the JSON is parsed straight from the stream
-        static const char* hdrs[] = {"Content-Type"};
-        http.collectHeaders(hdrs, 1);
+        static const char* hdrs[] = {"Content-Type", "Transfer-Encoding", "Content-Encoding"};
+        http.collectHeaders(hdrs, 3);
 
         {
             int code = http.GET();
@@ -121,18 +123,36 @@ static void checkForOTAUpdate() {
                 goto done;
             }
 
+            // Never feed transport framing/compressed bytes to the JSON parser.
+            if ((http.header("Transfer-Encoding").length() && http.header("Transfer-Encoding") != "identity") ||
+                (http.header("Content-Encoding").length() && http.header("Content-Encoding") != "identity")) {
+                _otaStatus("OTA: Unexpected response encoding");
+                http.end(); delay(1500); goto done;
+            }
+
             StaticJsonDocument<256> filter;
             filter["tag_name"]                          = true;
             filter["assets"][0]["name"]                 = true;
             filter["assets"][0]["browser_download_url"] = true;
 
             DynamicJsonDocument doc(4096);
+            OtaJsonReader<NetworkClient> reader(http.getStream());
             DeserializationError jerr =
-                deserializeJson(doc, http.getStream(),
+                deserializeJson(doc, reader,
                                 DeserializationOption::Filter(filter));
+            Serial.printf("OTA: metadata bytes %u, attempt %d, timeout %d, limit %d\n",
+                          (unsigned)reader.received(), attempt + 1, reader.timedOut, reader.tooLarge);
             http.end();
 
             if (jerr) {
+                if (reader.tooLarge) {
+                    _otaStatus("OTA: Release metadata too large");
+                    delay(1500); goto done;
+                }
+                if (attempt < 2) {
+                    _otaStatus("OTA: Metadata read failed - retrying...");
+                    delay(500); continue; // a fresh TLS connection for the next attempt
+                }
                 snprintf(buf, sizeof(buf), "OTA: JSON parse error (%s)", jerr.c_str());
                 _otaStatus(buf);
                 delay(1500);
@@ -140,6 +160,10 @@ static void checkForOTAUpdate() {
             }
 
             const char* tagRaw = doc["tag_name"] | "";
+            if (!*tagRaw) {
+                _otaStatus("OTA: Release version missing");
+                delay(1500); goto done;
+            }
             strncpy(latestVer,
                     (*tagRaw == 'v' || *tagRaw == 'V') ? tagRaw + 1 : tagRaw,
                     sizeof(latestVer) - 1);
@@ -165,6 +189,7 @@ static void checkForOTAUpdate() {
                 delay(1500);
                 goto done;
             }
+            break;
         }
     }
 
@@ -190,7 +215,7 @@ static void checkForOTAUpdate() {
 
         WiFiClientSecure dlClient;
         dlClient.setInsecure();
-        dlClient.setTimeout(60);
+        dlClient.setTimeout(60000);
 
         t_httpUpdate_return ret = httpUpdate.update(dlClient, downloadUrl);
         switch (ret) {
