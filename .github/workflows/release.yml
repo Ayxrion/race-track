@@ -7,7 +7,20 @@ on:
       - 'v[0-9]+.[0-9]+.[0-9]+'
 
 jobs:
+  test-simulation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify racing invariants and OTA integration
+        run: |
+          node --test tests/ota.test.mjs
+          node tests/run-simulation.mjs 18 recovery
+
   build-and-release:
+    needs: test-simulation
     runs-on: ubuntu-latest
     permissions:
       contents: write   # needed to create the GitHub release
@@ -81,6 +94,12 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "$GITHUB_REF_NAME" firmware.bin \
-            --title "Race Track Firmware $GITHUB_REF_NAME" \
-            --notes "The device flashes this release automatically the next time it boots with WiFi. For a manual flash, use esptool.py or the Arduino IDE with firmware.bin."
+          NOTES="docs/releases/${GITHUB_REF_NAME}.md"
+          if [ -f "$NOTES" ]; then
+            gh release create "$GITHUB_REF_NAME" firmware.bin \
+              --title "Race Track Firmware $GITHUB_REF_NAME" --notes-file "$NOTES"
+          else
+            gh release create "$GITHUB_REF_NAME" firmware.bin \
+              --title "Race Track Firmware $GITHUB_REF_NAME" \
+              --notes "The device flashes this release automatically the next time it boots with WiFi. For a manual flash, use esptool.py or the Arduino IDE with firmware.bin."
+          fi

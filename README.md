@@ -59,25 +59,19 @@
 - **Each driver's own line**: drivers vary the racing line through every corner (earlier or later apex, more or less kerb, wider or tighter on entry and exit), and change it lap to lap.
   Braking harder than they're comfortable with, or getting on the throttle too early, uses up grip the tyres need for turning, so a greedy driver runs wide or snaps into oversteer.
   Close behind another car in a corner the dirty air costs grip. Drivers cover the inside into a corner when a car at least as quick is right on their tail, switch back underneath on the exit, and try round the outside, where the car on the inside has to leave room and loses a little exit speed.
-  Side by side, a driver plans its speed for the path it's really on (beside the other car or along the kerb), and an attacker carries a little more than is comfortable.
+  Side by side, a driver plans its speed for the path it's really on (beside the other car or along the kerb), with the same grip limits for attacker and defender.
   The classic AI (everyone on the one racing line) is still in the code: set `aiLines` to `false` in `cars.h`.
-- **Close racing**: within about a second of the car ahead and in line behind it, anywhere the track is flat out, a driver gets a strong tow that adds acceleration and top speed (never past what the next corner allows).
-  A car alongside gets no tow, so two cars side by side don't leapfrog each other down a straight.
-  Pulling out to pass, a driver keeps the tow's speed for a moment and gets a push to pass; the car they've just passed has to get back in the tow before attacking again.
-  A driver committed to a move brakes later into the next corner, and once their nose is alongside on the inside, the other car usually gives way.
-  A leader with a cushion manages the gap, and every driver's form drifts a little over a race, so gaps open and close.
-  Races stay open: the further back a car is in its class, the more speed it finds down the straights. That builds up gradually once a car is more than a couple of seconds off its class leader, so cars near the front race on merit.
-  A car with someone right behind is more likely to make a mistake.
-- **Drivers** all race the same way, so no kind of driver has an edge. They differ in skill (how often they make mistakes), a little raw pace, their form on the day, and their own lines through corners.
-  Pace and skill are set for a whole season, so every season has its favourites and its underdogs.
-  Every driver lets cars that are lapping them through (blue flags).
+- **Fair racing**: slipstream provides modest assistance only while physically in another car's wake. Moving alongside removes that assistance; existing momentum dissipates through drag. There is no push-to-pass power, position-based catch-up or leader slowdown.
+  Battles progress through preparation, commitment, overlap and recovery. Completed, abandoned and expired attacks clear their state, with a cooldown for the same pair. A wider path can carry more speed only when its curvature and tyre grip allow it.
+  Each driver observes the same start-of-step positions. Race logs count a pass after the car is clearly ahead for half a second, excluding pit cycles, lapping and retirements.
+- **Drivers** retain modest individual strengths in braking, wet-weather judgment, consistency, tyre care and racing lines. Traits follow their driver code across races and OTA updates; skill and base pace still come from their existing careers. Aggressive attacks cost tyre life, and mistakes remain constrained by the same physics.
 - **Damage**: a hard hit on the wall or another car does damage. A damaged car loses some top speed and grip, trails smoke and gets a red mark on the leaderboard; a big enough crash puts it out of the race, and it's pushed off the road where it smokes for a while. A retirement scores no points. In endless races damage slows a car but never puts it out.
 - **Safety car**: after a retirement (unless there are fewer than 3 laps to go) the safety car comes out ahead of the leader with its lights flashing. Nobody may pass, and the field closes up behind it. Once the wreck is off the road and a lap has gone by, it's *in this lap*: it pulls off before the line, and racing resumes when the leader crosses it.
-- **Tyres and pit stops**: tyres wear as a car laps and lose grip, slowly at first and then faster. In a race of 8 laps or more every driver plans one stop around half distance, and comes in early for a cheap stop under the safety car, or to have heavy damage repaired. A stop is a drive down the pit lane at the speed limit, new tyres at the car's own garage (a new nose too, if it needs one), and back out: about 9 seconds in all. Tracks without a pit lane, and short races, have no stops.
-- **Wet races**: cars start on slicks or wets to suit the track. Slicks lose a lot of grip as it gets wet, while wets give a little away everywhere and wear out fast on a dry track; they're as quick as each other at about 40% wet. Each driver has their own idea of when to come in for wets and when to go back to slicks, so in a light shower some gamble on staying out. A car on wets has a blue mark on the leaderboard, and the ticker calls out the switches.
+- **Tyres and pit stops**: soft, medium and hard dry tyres trade grip against wear. Drivers choose different starting stints without reference to running position. A durable set can avoid a stop; a faster set may need an earlier stop. Braking and corner-speed planning account for wear and damage, so fresh tyres make a real difference. Drivers can pit early when held up, extend a healthy stint in clear air, exploit a safety-car stop, or repair damage. Tyres fitted after a stop are chosen for the remaining distance. Pit captions identify the new dry compound.
+- **Wet races**: cars start on slicks or wets to suit the track. Slicks lose a lot of grip as it gets wet, while wets give a little away everywhere and wear out fast on a dry track; the crossover depends on the dry compound. Each driver has their own idea of when to come in for wets and when to go back to slicks, so in a light shower some gamble on staying out. A car on wets has a blue mark on the leaderboard, and the ticker calls out the switches.
   With the weather on *Auto*, a race is wet when it's raining where you are. With **Rain showers** on (Settings), about 1 dry race in 6 (live weather, or forced Sunny, Partly cloudy or Cloudy) also has a shower passing over: it starts somewhere in the first half, lasts from about a lap to a third of the race, and can be light (the track only half wet) or a storm. The track soaks in over about half a minute and dries over a couple of laps.
 - **Race weekend loop**: a quick qualifying sets the grid (the quickest drivers usually start at the front, but a mistake costs places), the cars form up behind the start lights, race for the set number of laps, and take the chequered flag.
-  Pole is worth having: grid slots are a little more than a car length apart, the best drivers react quickest at the lights, and the tow, push to pass and the catch-up for cars further back all build up over the first lap and a half. The pole sitter leads after lap 1 a little under half the time.
+  Qualifying estimates a flying lap from the circuit, car class, driver, braking, acceleration and weather, on a common fresh dry compound or wets. Execution varies and mistakes can cost places. Pole earns track position and clean air; no hidden speed correction erases a lead. Existing championship points remain 25–18–15 for the podium, with no new pole bonus.
   The result is shown, then the championship standings, and then the next circuit is built.
   Races can also be endless.
 - **Championship**: a season is 10 races, scored 25-18-15-12-10-8-6-4-2-1 by place in class, so in Endurance the first GT scores as much as the first prototype. The prototypes go to whoever has had the fewest so far, and each driver keeps their team colours for the season.
@@ -174,7 +168,7 @@ The relay's certificate must chain to one of the roots in [`telemetry_ca.h`](rac
 ## OTA releases
 
 `version.h` points OTA at `ayxrion/race-track`.
-Pushing a tag like `v0.1.1` runs [`.github/workflows/release.yml`](.github/workflows/release.yml), which builds the firmware with the LovyanGFX fix and attaches `firmware.bin` to a GitHub release.
+Pushing a tag like `v0.1.1` runs [`.github/workflows/release.yml`](.github/workflows/release.yml), which first runs simulation and OTA regression checks, then builds the firmware with the LovyanGFX fix and attaches `firmware.bin` to a GitHub release.
 It needs these Actions secrets: `WIFI_SSID`, `WIFI_PASSWORD`, `WEATHER_API_KEY`, `WEATHER_LAT`, `WEATHER_LON`, `TIMEZONE_OFFSET_HOURS`.
 
 ## Project layout
@@ -190,6 +184,7 @@ race_track/
   world.h            scenery bake (palette-indexed), trees, palette lighting, background render
   effects.h          dust / smoke / spray particles, camera flashes, floodlights, rain / snow / fog / lightning
   cars.h             car classes, liveries, driving AI, drawing
+  racecraft.h        persistent driver traits, battle recovery, wake and qualifying model
   race.h             grid, start lights, laps, chequered flag, results, event ticker
   champ.h            championship standings and driver records (NVS)
   careers.h          careers: ageing, form, retirements and rookies between seasons
