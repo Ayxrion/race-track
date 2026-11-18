@@ -57,44 +57,26 @@ static void raceEvent(const char* m, float minGap = 3.0f, uint32_t ms = 3200) {
 // leader completes a lap, and the result. Each line goes out in one write so the
 // two cores' output doesn't interleave mid-line.
 static int8_t gridSlot[MAX_CARS];
-static int8_t logPairLeader[MAX_CARS][MAX_CARS];
-static float logPairSince[MAX_CARS][MAX_CARS];
+static int    logPrevOrd[MAX_CARS];
 static int    logLeadLap = 0, logPasses = 0, logLeadChanges = 0, logInc = 0;
 
 static void logRaceStart() {
   Serial.printf("RL START %s|%s cars %d laps %d\n", trk.name, SERIES_NAMES[raceSeries], numCars, raceLaps);
   for (int k = 0; k < numCars; ++k) {
     const Car& c = cars[order[k]];
-    gridSlot[order[k]] = k + 1;
-    Serial.printf("RL GRID %d %s perf %.4f skill %.3f quali %.3f aggression %.2f tyreCare %.2f tyres %s\n", k + 1, c.code, c.perf, c.skill, c.qualiTime, c.aggression, c.tyreCare, c.wets ? "wet" : TYRE_NAMES[c.compound]);
-  }
-  for (int i = 0; i < numCars; ++i) for (int j = i + 1; j < numCars; ++j) {
-    logPairLeader[i][j] = cars[i].dist >= cars[j].dist ? i : j;
-    logPairSince[i][j] = -1;
+    gridSlot[order[k]] = k + 1; logPrevOrd[k] = order[k];
+    Serial.printf("RL GRID %d %s perf %.4f skill %.3f\n", k + 1, c.code, c.perf, c.skill);
   }
   logLeadLap = 0; logPasses = logLeadChanges = logInc = 0;
 }
 
 static void logRaceStep() {
-  // A pass is clear by a car length and held for half a second. Overlap chatter,
-  // lapping, pit cycles and passing a retired/finished car are not racing passes.
-  for (int i = 0; i < numCars; ++i) for (int j = i + 1; j < numCars; ++j) {
-    const Car &a = cars[i], &b = cars[j];
-    const float gap = a.dist - b.dist;
-    const int leader = gap >= 0 ? i : j;
-    if (a.out || b.out || a.finished || b.finished || a.pit || b.pit || a.ghost || b.ghost ||
-        scState != SC_NONE || fabsf(gap) > trk.L * 0.5f) {
-      logPairLeader[i][j] = leader; logPairSince[i][j] = -1; continue;
+  for (int k = 0; k + 1 < numCars; ++k)
+    if (order[k] == logPrevOrd[k + 1] && order[k + 1] == logPrevOrd[k]) {
+      ++logPasses; if (k == 0) ++logLeadChanges;
+      Serial.printf("RL PASS %.1f %s %s P%d\n", raceTime, cars[order[k]].code, cars[order[k + 1]].code, k + 1);
     }
-    const float clear = (CLS[a.cls].len + CLS[b.cls].len) * 0.5f + 3.0f;
-    if (leader == logPairLeader[i][j] || fabsf(gap) < clear) { logPairSince[i][j] = -1; continue; }
-    if (logPairSince[i][j] < 0) logPairSince[i][j] = raceTime;
-    if (raceTime - logPairSince[i][j] < 0.5f) continue;
-    const int passed = leader == i ? j : i;
-    ++logPasses; if (cars[leader].pos == 1) ++logLeadChanges;
-    Serial.printf("RL PASS %.1f %s %s P%d\n", raceTime, cars[leader].code, cars[passed].code, cars[leader].pos);
-    logPairLeader[i][j] = leader; logPairSince[i][j] = -1;
-  }
+  memcpy(logPrevOrd, order, sizeof(int) * numCars);
   const Car& L = cars[order[0]];
   if (L.lap > logLeadLap && L.lap >= 1) {
     logLeadLap = L.lap;
@@ -206,9 +188,7 @@ static void updateRace(float dt) {
   if (phase == RP_RACE) replayRecord();                 // the last few seconds, for replays
 
   // Chequered flag when the leader completes the last lap
-  bool allRetired = true;
-  for (int i = 0; i < numCars; ++i) if (!cars[i].out) allRetired = false;
-  if (phase == RP_RACE && raceLaps > 0 && (cars[order[0]].lap >= raceLaps || allRetired)) {
+  if (phase == RP_RACE && raceLaps > 0 && cars[order[0]].lap >= raceLaps) {
     phase = RP_FINISH; phaseT = 0;
     for (int i = 0; i < numCars; ++i) cars[i].lapsAtFlag = cars[i].lap;
     scState = SC_NONE; scShow = false;          // a finish under the safety car: it pulls off at the flag
@@ -224,11 +204,7 @@ static void updateRace(float dt) {
         if (c.finishPos == 1) { char b[48]; snprintf(b, sizeof(b), "CHEQUERED FLAG - %s WINS!", c.code); raceEvent(b, 0, 5000); }
       }
     }
-    // A wet GT/van lap can exceed 50 seconds. Give the slower classes time to
-    // finish their current lap rather than recording a healthy runner as DNF.
-    float finishGrace = 50.0f;
-    for (int i = 0; i < numCars; ++i) if (!cars[i].out) finishGrace = fmx(finishGrace, cars[i].qualiTime * 2.0f + 10.0f);
-    if (phase == RP_FINISH && (finishCount + outN >= numCars || phaseT > finishGrace)) { phase = RP_RESULTS; phaseT = 0; logRaceEnd(); }
+    if (phase == RP_FINISH && (finishCount + outN >= numCars || phaseT > 50)) { phase = RP_RESULTS; phaseT = 0; logRaceEnd(); }
     if (phase == RP_RESULTS && phaseT > resultsSecs) nextRaceRequested = true;
   }
   updateOrder();
@@ -253,11 +229,7 @@ static void updateRace(float dt) {
                          pitCapCar = ev.a; pitCapT = simTime; pitCapSecs = A.pitStopT; pitCapRep = A.pitStopT > 3.1f; pitCapTyre = A.tyreChg;
                          if (A.tyreChg) {
                            Serial.printf("RL TYRE %.1f %s lap %d P%d %s wet %.2f\n", raceTime, A.code, A.lap, A.pos, A.wets ? "wets" : "slicks", wetAmt);
-                           if (A.pos <= 8) {
-                             if (A.wets) snprintf(b, sizeof(b), "%s switches to wets", A.code);
-                             else snprintf(b, sizeof(b), "%s fits %s tyres%s", A.code, TYRE_NAMES[A.compound], wetAmt > 0.3f ? " - a gamble!" : "");
-                             raceEvent(b, 2.0f);
-                           }
+                           if (A.pos <= 8) { snprintf(b, sizeof(b), A.wets ? "%s switches to wets" : (wetAmt > 0.3f ? "%s gambles on slicks!" : "%s is back on slicks"), A.code); raceEvent(b, 2.0f); }
                          }
                        } break;
       case EV_DAMAGE:  snprintf(b, sizeof(b), "%s is damaged and losing time", A.code); raceEvent(b, 2.0f);

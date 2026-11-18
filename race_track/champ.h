@@ -183,43 +183,42 @@ static void champRecordRace() {
   const bool clinchedBefore = nb >= 2 && champ.row[before[0]].pts > champ.row[before[1]].pts + 25 * remainingBefore;
 
   int clsN[CC_COUNT] = { 0 };
-  resFoot[0] = 0; memset(resNote, 0, sizeof(resNote));
+  resFoot[0] = 0;
   for (int k = 0; k < numCars; ++k) {
     const int i = order[k];
     const Car& c = cars[i];
     const int p = ++clsN[c.cls];                         // place in class
-    const bool classified = c.finished && !c.out;
-    const uint8_t pts = classified && p <= 10 ? CH_PTS[p - 1] : 0;   // a retirement scores nothing
+    const uint8_t pts = !c.out && p <= 10 ? CH_PTS[p - 1] : 0;   // a retirement scores nothing
     resPts[i] = pts;
     ChampRow* r = champFind(c.code, true);
     RecRow* rc = recFind(c.code, true);
     if (r) {
       r->pts += pts; ++r->starts;
-      if (classified && p == 1) ++r->wins;
-      if (classified && p <= 3) ++r->pods;
-      if (classified && (!r->best || p < r->best)) r->best = p;
+      if (p == 1) ++r->wins;
+      if (p <= 3) ++r->pods;
+      if (!r->best || p < r->best) r->best = p;
       if (raceSeries == SER_ENDURANCE && c.cls == CC_PROTO) ++r->protos;
     }
     rc->last = recs.raceCount; ++rc->starts;
-    if (classified && p == 1) { ++rc->wins; ++rc->streak; if (rc->streak > rc->bestStreak) rc->bestStreak = rc->streak; }
+    if (p == 1) { ++rc->wins; ++rc->streak; if (rc->streak > rc->bestStreak) rc->bestStreak = rc->streak; }
     else rc->streak = 0;
-    if (classified && p <= 3) ++rc->pods;
+    if (p <= 3) ++rc->pods;
     if (i == poleCar) ++rc->poles;
     if (i == fastestCar) ++rc->fastLaps;
 
     const int grid = gridSlot[i];
     if (k < 3) {
       char* nt = resNote[k]; nt[0] = 0;
-      if (classified && p == 1) {
+      if (p == 1) {
         if (rc->wins == 1)                 snprintf(nt, 32, "First win!");
         else if (rc->streak >= 2)          snprintf(nt, 32, "%d wins in a row", rc->streak);
         else if (grid >= 6)                snprintf(nt, 32, "Won from P%d", grid);
         else                               snprintf(nt, 32, "%d%s win", rc->wins, ordSuffix(rc->wins));
-      } else if (classified && p <= 3) {
+      } else if (p <= 3) {
         if (rc->pods == 1)                 snprintf(nt, 32, "First podium!");
         else if (grid - (k + 1) >= 4)      snprintf(nt, 32, "Up %d places", grid - (k + 1));
       }
-    } else if (classified && p == 1 && !resFoot[0]) {
+    } else if (p == 1 && !resFoot[0]) {
       snprintf(resFoot, sizeof(resFoot), "%s class win: %s%s", CLS[c.cls].name, c.code, rc->wins == 1 ? " (a first win!)" : "");
     }
   }
